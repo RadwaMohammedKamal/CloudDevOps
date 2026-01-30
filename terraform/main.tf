@@ -9,11 +9,21 @@ module "vpc" {
   tags                 = var.tags
 }
 
-# module "iam" {
-#   source      = "./modules/iam"
-#   environment = var.environment
-#   tags        = var.tags
-# }
+module "iam" {
+  source      = "./modules/iam"
+  environment = var.environment
+  tags        = var.tags
+}
+
+module "eks" {
+  source                         = "./modules/eks"
+  environment                    = var.environment
+  private_subnets                = module.vpc.private_subnet_ids
+  eks_cluster_role_arn           = module.iam.eks_cluster_role_arn
+  node_group_role_arn            = module.iam.eks_node_group_role_arn
+  fargate_pod_execution_role_arn = module.iam.eks_fargate_pod_execution_role_arn
+  tags                           = var.tags
+}
 
 # module "eks" {
 #   source                        = "./modules/eks"
