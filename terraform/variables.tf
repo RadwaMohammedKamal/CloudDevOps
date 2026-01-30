@@ -5,7 +5,6 @@ variable "region" {
 
 variable "environment" {
   type        = string
-  default = "prod"
   description = "Environment name (prod/nonprod)"
 }
 
