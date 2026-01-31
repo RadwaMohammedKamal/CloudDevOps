@@ -1,42 +1,99 @@
-trigger:
-  branches:
-    include:
-      - main
+trigger: none
+pr: none
+
+parameters:
+  - name: env
+    displayName: Environment
+    type: string
+    default: prod
+    values: [nonprod, prod]
+
+  - name: destroy
+    displayName: Destroy
+    type: boolean
+    default: false
 
 variables:
-  terraformWorkingDirectory: 'terraform'
-  environment: 'prod' 
+  TF_DIR: terraform
+  TF_VAR_FILE: 'prod.auto.tfvars'
+  AWS_SERVICE_CONNECTION: AWS
+  AWS_REGION: eu-north-1
 
-stages:
-- stage: Terraform
-  displayName: 'Terraform Apply Infra'
-  jobs:
-  - job: TerraformApply
-    displayName: 'Terraform Apply'
-    pool:
-      vmImage: 'ubuntu-latest'
-    steps:
-    - checkout: self
+pool:
+  vmImage: ubuntu-latest
 
-    # تثبيت Terraform
-    - task: TerraformInstaller@0
-      inputs:
-        terraformVersion: '1.5.6'
+steps:
+- checkout: self
 
-    # init
-    - script: |
-        cd $(terraformWorkingDirectory)
-        terraform init
-      displayName: 'Terraform Init'
+- task: TerraformInstaller@1
+  displayName: Install Terraform
+  inputs:
+    terraformVersion: latest
 
-    # plan
-    - script: |
-        cd $(terraformWorkingDirectory)
-        terraform plan -var-file="prod.auto.tfvars" -out=tfplan
-      displayName: 'Terraform Plan'
+- task: AWSShellScript@1
+  displayName: Configure AWS credentials
+  inputs:
+    awsCredentials: $(AWS_SERVICE_CONNECTION)
+    regionName: $(AWS_REGION)
+    scriptType: inline
+    inlineScript: |
+      set -euo pipefail
+      echo "AWS credentials configured"
 
-    # apply
-    - script: |
-        cd $(terraformWorkingDirectory)
-        terraform apply -auto-approve tfplan
-      displayName: 'Terraform Apply'
+- task: AWSShellScript@1
+  displayName: Terraform init
+  inputs:
+    awsCredentials: $(AWS_SERVICE_CONNECTION)
+    regionName: $(AWS_REGION)
+    scriptType: inline
+    inlineScript: |
+      set -euo pipefail
+      cd "$(TF_DIR)"
+      terraform init
+
+- task: AWSShellScript@1
+  displayName: Terraform plan
+  inputs:
+    awsCredentials: $(AWS_SERVICE_CONNECTION)
+    regionName: $(AWS_REGION)
+    scriptType: inline
+    inlineScript: |
+      set -euo pipefail
+      cd "$(TF_DIR)"
+      terraform plan -out=tfplan -var-file="$(TF_VAR_FILE)"
+
+- task: AWSShellScript@1
+  displayName: Terraform apply
+  inputs:
+    awsCredentials: $(AWS_SERVICE_CONNECTION)
+    regionName: $(AWS_REGION)
+    scriptType: inline
+    inlineScript: |
+      set -euo pipefail
+      cd "$(TF_DIR)"
+      terraform apply -auto-approve tfplan
+
+# Optional Destroy steps, only run if you set destroy=true when running the pipeline
+- task: AWSShellScript@1
+  displayName: Terraform plan destroy
+  condition: eq('${{ parameters.destroy }}', true)
+  inputs:
+    awsCredentials: $(AWS_SERVICE_CONNECTION)
+    regionName: $(AWS_REGION)
+    scriptType: inline
+    inlineScript: |
+      set -euo pipefail
+      cd "$(TF_DIR)"
+      terraform plan -destroy -out=tfplan -var-file="$(TF_VAR_FILE)"
+
+- task: AWSShellScript@1
+  displayName: Terraform apply destroy
+  condition: eq('${{ parameters.destroy }}', true)
+  inputs:
+    awsCredentials: $(AWS_SERVICE_CONNECTION)
+    regionName: $(AWS_REGION)
+    scriptType: inline
+    inlineScript: |
+      set -euo pipefail
+      cd "$(TF_DIR)"
+      terraform apply -auto-approve tfplan
