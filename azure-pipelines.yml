@@ -1,0 +1,42 @@
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  terraformWorkingDirectory: 'terraform'
+  environment: 'prod' 
+
+stages:
+- stage: Terraform
+  displayName: 'Terraform Apply Infra'
+  jobs:
+  - job: TerraformApply
+    displayName: 'Terraform Apply'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+
+    # تثبيت Terraform
+    - task: TerraformInstaller@0
+      inputs:
+        terraformVersion: '1.5.6'
+
+    # init
+    - script: |
+        cd $(terraformWorkingDirectory)
+        terraform init
+      displayName: 'Terraform Init'
+
+    # plan
+    - script: |
+        cd $(terraformWorkingDirectory)
+        terraform plan -var-file="prod.auto.tfvars" -out=tfplan
+      displayName: 'Terraform Plan'
+
+    # apply
+    - script: |
+        cd $(terraformWorkingDirectory)
+        terraform apply -auto-approve tfplan
+      displayName: 'Terraform Apply'
