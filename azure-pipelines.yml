@@ -15,7 +15,7 @@ parameters:
 
 variables:
   TF_DIR: terraform
-  TF_VAR_FILE: 'prod.auto.tfvars'
+  TF_VAR_FILE: '{{ parameters.env }}.tfvars'
   AWS_SERVICE_CONNECTION: AWS
   AWS_REGION: eu-north-1
 
