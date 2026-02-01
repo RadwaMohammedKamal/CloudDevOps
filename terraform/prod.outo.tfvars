@@ -12,3 +12,4 @@ tags = {
   env     = "prod"
   project = "CloudDevOps"
 }
+app_port = 8080
