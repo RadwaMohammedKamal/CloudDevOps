@@ -15,3 +15,6 @@ tags = {
 }
 app_port = 8080
 
+
+cognito_user_pool_domain    = "mycognito.auth.eu-north-1.amazoncognito.com"
+cognito_user_pool_client_id = "xxxxxxxxxxxxxxxxxxxxxxxxxx"

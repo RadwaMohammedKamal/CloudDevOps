@@ -99,14 +99,15 @@ resource "aws_security_group" "eks_nodes" {
   description = "Allow traffic from NLB to EKS nodes"
   vpc_id      = aws_vpc.this.id
 
-  ingress {
-    from_port   = var.app_port
-    to_port     = var.app_port
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+   ingress {
+    from_port                = var.app_port
+    to_port                  = var.app_port
+    protocol                 = "tcp"
+    # security_groups = [aws_lb.alb.id] 
+    # security_groups          = [aws_lb.nlb.security_group_id] 
   }
 
-  egress {
+ egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -115,3 +116,4 @@ resource "aws_security_group" "eks_nodes" {
 
   tags = var.tags
 }
+
