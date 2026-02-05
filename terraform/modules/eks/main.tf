@@ -10,7 +10,6 @@ resource "aws_eks_cluster" "this" {
   }
 
   enabled_cluster_log_types = ["api","audit","authenticator","controllerManager","scheduler"]
-  depends_on = [aws_cloudwatch_log_group.eks]
   tags       = var.tags
 }
 

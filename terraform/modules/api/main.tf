@@ -1,17 +1,46 @@
 ##########################
-# Security Group للـ ALB
+# NLB
 ##########################
-resource "aws_security_group" "alb_sg" {
-  name        = "${var.environment}-alb-sg"
-  description = "Security group for ALB"
-  vpc_id      = var.vpc_id
+resource "aws_lb" "app_nlb" {
+  name               = "${var.environment}-nlb"
+  load_balancer_type = "network"
+  internal           = true
+  subnets            = var.public_subnets
+  tags               = var.tags
+}
 
-  ingress {
-    from_port   = var.app_port
-    to_port     = var.app_port
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+##########################
+# Target Group (TCP)
+##########################
+resource "aws_lb_target_group" "app_tg" {
+  name        = "${var.environment}-tg"
+  port        = var.app_port
+  protocol    = "TCP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+}
+
+##########################
+# Listener
+##########################
+resource "aws_lb_listener" "nlb_listener" {
+  load_balancer_arn = aws_lb.app_nlb.arn
+  port              = var.app_port
+  protocol          = "TCP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app_tg.arn
   }
+}
+
+############################################################
+
+# Security Group للـ VPC Link
+##########################
+resource "aws_security_group" "vpc_link_sg" {
+  name   = "${var.environment}-vpc-link-sg"
+  vpc_id = var.vpc_id
 
   egress {
     from_port   = 0
@@ -24,45 +53,22 @@ resource "aws_security_group" "alb_sg" {
 }
 
 ##########################
-# Application Load Balancer
+# VPC Link 
 ##########################
-resource "aws_lb" "app_alb" {
-  name               = "${var.environment}-alb"
-  internal           = false
-  load_balancer_type = "application"
-  subnets            = var.public_subnets
-  security_groups    = [aws_security_group.alb_sg.id]
-  tags               = var.tags
+resource "aws_apigatewayv2_vpc_link" "vpc_link" {
+  name               = "${var.environment}-vpc-link"
+  subnet_ids         = var.public_subnets
+  security_group_ids = [aws_security_group.vpc_link_sg.id]
 }
 
-##########################
-# Target Group (لازم HTTP)
-##########################
-resource "aws_lb_target_group" "app_tg" {
-  name        = "${var.environment}-tg"
-  port        = var.app_port
-  protocol    = "HTTP"      # ✅ اتغيرت
-  vpc_id      = var.vpc_id
-  target_type = "ip"
+############################################################
+# API Gateway
+############################################################
 
-  health_check {
-    protocol = "HTTP"
-    path     = "/"
-  }
-}
-
-##########################
-# Listener للـ ALB (لازم HTTP)
-##########################
-resource "aws_lb_listener" "app_listener" {
-  load_balancer_arn = aws_lb.app_alb.arn
-  port              = var.app_port
-  protocol          = "HTTP"   # ✅ اتغيرت
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.app_tg.arn
-  }
+resource "aws_apigatewayv2_api" "http_api" {
+  name          = "${var.environment}-http-api"
+  protocol_type = "HTTP"
+  tags          = var.tags
 }
 
 ##########################
@@ -80,17 +86,10 @@ resource "aws_cognito_user_pool" "user_pool" {
     require_numbers   = true
     require_symbols   = false
   }
-
-  schema {
-    name                = "email"
-    attribute_data_type = "String"
-    required            = true
-    mutable             = true
-  }
 }
 
 ##########################
-# Cognito User Pool Client
+# Cognito Client
 ##########################
 resource "aws_cognito_user_pool_client" "user_pool_client" {
   name         = "${var.environment}-user-pool-client"
@@ -108,16 +107,7 @@ resource "aws_cognito_user_pool_client" "user_pool_client" {
 }
 
 ##########################
-# API Gateway HTTP API
-##########################
-resource "aws_apigatewayv2_api" "http_api" {
-  name          = "${var.environment}-http-api"
-  protocol_type = "HTTP"
-  tags          = var.tags
-}
-
-##########################
-# JWT Authorizer (Cognito)
+# JWT Authorizer
 ##########################
 resource "aws_apigatewayv2_authorizer" "cognito_jwt_authorizer" {
   api_id           = aws_apigatewayv2_api.http_api.id
@@ -131,14 +121,20 @@ resource "aws_apigatewayv2_authorizer" "cognito_jwt_authorizer" {
   }
 }
 
-##########################
-# API Gateway → ALB Integration
-##########################
-resource "aws_apigatewayv2_integration" "alb_integration" {
-  api_id                 = aws_apigatewayv2_api.http_api.id
-  integration_type       = "HTTP_PROXY"
-  integration_method     = "ANY"
-  integration_uri        = "http://${aws_lb.app_alb.dns_name}:${var.app_port}"
+############################################################
+# Integration: API Gateway → VPC Link → NLB
+############################################################
+
+resource "aws_apigatewayv2_integration" "nlb_integration" {
+  api_id           = aws_apigatewayv2_api.http_api.id
+  integration_type = "HTTP_PROXY"
+
+  integration_method = "ANY"
+  integration_uri    = aws_lb.app_nlb.arn
+
+  connection_type = "VPC_LINK"
+  connection_id   = aws_apigatewayv2_vpc_link.vpc_link.id
+
   payload_format_version = "1.0"
 }
 
@@ -152,15 +148,16 @@ resource "aws_apigatewayv2_stage" "default_stage" {
 }
 
 ##########################
-# Protected route: كل حاجة ورا Cognito
+# Protected Route (JWT)
 ##########################
 resource "aws_apigatewayv2_route" "jwt_proxy_route" {
   api_id             = aws_apigatewayv2_api.http_api.id
   route_key          = "ANY /{proxy+}"
-  target             = "integrations/${aws_apigatewayv2_integration.alb_integration.id}"
+  target             = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.cognito_jwt_authorizer.id
 }
+
 
 
 # # Security Group للـ ALB

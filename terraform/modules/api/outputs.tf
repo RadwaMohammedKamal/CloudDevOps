@@ -1,13 +1,9 @@
-output "alb_dns" {
-  value = aws_lb.app_alb.dns_name
+output "nlb_dns" {
+  value = aws_lb.app_nlb.dns_name
 }
 
-output "api_gateway_url" {
-  value = aws_apigatewayv2_stage.default_stage.invoke_url
-}
-
-output "alb_sg_id" {
-  value = aws_security_group.alb_sg.id
+output "vpc_link_sg_id" {
+  value = aws_security_group.vpc_link_sg.id
 }
 
 output "cognito_user_pool_id" {
@@ -16,4 +12,8 @@ output "cognito_user_pool_id" {
 
 output "cognito_user_pool_client_id" {
   value = aws_cognito_user_pool_client.user_pool_client.id
+}
+
+output "api_gateway_url" {
+  value = aws_apigatewayv2_stage.default_stage.invoke_url
 }
