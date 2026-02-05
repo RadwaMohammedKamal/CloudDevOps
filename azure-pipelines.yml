@@ -20,7 +20,7 @@ variables:
   AWS_REGION: eu-north-1
 
 pool:
-  vmImage: ubuntu-latest
+  name: radwa_mohamed-agent
 
 steps:
 - checkout: self
