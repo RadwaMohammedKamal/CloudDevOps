@@ -6,12 +6,18 @@ parameters:
     displayName: Environment
     type: string
     default: prod
-    values: [nonprod, prod]
+    values:
+      - nonprod
+      - prod
 
-  - name: destroy
-    displayName: Destroy
-    type: boolean
-    default: false
+  - name: action
+    displayName: Terraform Action
+    type: string
+    default: plan
+    values:
+      - plan
+      - apply
+      - destroy
 
 variables:
   TF_DIR: terraform
@@ -25,11 +31,17 @@ pool:
 steps:
 - checkout: self
 
+# ----------------------------
+# Install Terraform
+# ----------------------------
 - task: TerraformInstaller@1
   displayName: Install Terraform
   inputs:
     terraformVersion: latest
 
+# ----------------------------
+# AWS Credentials
+# ----------------------------
 - task: AWSShellScript@1
   displayName: Configure AWS credentials
   inputs:
@@ -40,6 +52,9 @@ steps:
       set -euo pipefail
       echo "AWS credentials configured"
 
+# ----------------------------
+# Terraform init
+# ----------------------------
 - task: AWSShellScript@1
   displayName: Terraform init
   inputs:
@@ -51,8 +66,15 @@ steps:
       cd "$(TF_DIR)"
       terraform init
 
+# ----------------------------
+# Terraform plan (plan + apply)
+# ----------------------------
 - task: AWSShellScript@1
   displayName: Terraform plan
+  condition: or(
+    eq('${{ parameters.action }}', 'plan'),
+    eq('${{ parameters.action }}', 'apply')
+  )
   inputs:
     awsCredentials: $(AWS_SERVICE_CONNECTION)
     regionName: $(AWS_REGION)
@@ -62,8 +84,12 @@ steps:
       cd "$(TF_DIR)"
       terraform plan -out=tfplan -var-file="$(TF_VAR_FILE)"
 
+# ----------------------------
+# Terraform apply
+# ----------------------------
 - task: AWSShellScript@1
   displayName: Terraform apply
+  condition: eq('${{ parameters.action }}', 'apply')
   inputs:
     awsCredentials: $(AWS_SERVICE_CONNECTION)
     regionName: $(AWS_REGION)
@@ -73,10 +99,12 @@ steps:
       cd "$(TF_DIR)"
       terraform apply -auto-approve tfplan
 
-# Optional Destroy steps, only run if you set destroy=true when running the pipeline
+# ----------------------------
+# Terraform plan destroy
+# ----------------------------
 - task: AWSShellScript@1
   displayName: Terraform plan destroy
-  condition: eq('${{ parameters.destroy }}', true)
+  condition: eq('${{ parameters.action }}', 'destroy')
   inputs:
     awsCredentials: $(AWS_SERVICE_CONNECTION)
     regionName: $(AWS_REGION)
@@ -86,9 +114,12 @@ steps:
       cd "$(TF_DIR)"
       terraform plan -destroy -out=tfplan -var-file="$(TF_VAR_FILE)"
 
+# ----------------------------
+# Terraform apply destroy
+# ----------------------------
 - task: AWSShellScript@1
   displayName: Terraform apply destroy
-  condition: eq('${{ parameters.destroy }}', true)
+  condition: eq('${{ parameters.action }}', 'destroy')
   inputs:
     awsCredentials: $(AWS_SERVICE_CONNECTION)
     regionName: $(AWS_REGION)
