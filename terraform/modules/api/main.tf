@@ -6,7 +6,32 @@ resource "aws_lb" "app_nlb" {
   load_balancer_type = "network"
   internal           = true
   subnets            = var.public_subnets
+  security_groups    = [aws_security_group.alb_sg.id]   # استخدمنا SG هنا
   tags               = var.tags
+}
+
+##########################
+# Security Group للـ NLB
+##########################
+resource "aws_security_group" "alb_sg" {
+  name   = "${var.environment}-alb-sg"
+  vpc_id = var.vpc_id
+
+  ingress {
+    from_port   = var.app_port
+    to_port     = var.app_port
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]   # عدّل حسب احتياجك
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = var.tags
 }
 
 ##########################
@@ -34,8 +59,7 @@ resource "aws_lb_listener" "nlb_listener" {
   }
 }
 
-############################################################
-
+##########################
 # Security Group للـ VPC Link
 ##########################
 resource "aws_security_group" "vpc_link_sg" {
@@ -61,10 +85,9 @@ resource "aws_apigatewayv2_vpc_link" "vpc_link" {
   security_group_ids = [aws_security_group.vpc_link_sg.id]
 }
 
-############################################################
+##########################
 # API Gateway
-############################################################
-
+##########################
 resource "aws_apigatewayv2_api" "http_api" {
   name          = "${var.environment}-http-api"
   protocol_type = "HTTP"
@@ -121,10 +144,9 @@ resource "aws_apigatewayv2_authorizer" "cognito_jwt_authorizer" {
   }
 }
 
-############################################################
+##########################
 # Integration: API Gateway → VPC Link → NLB
-############################################################
-
+##########################
 resource "aws_apigatewayv2_integration" "nlb_integration" {
   api_id           = aws_apigatewayv2_api.http_api.id
   integration_type = "HTTP_PROXY"
@@ -157,6 +179,7 @@ resource "aws_apigatewayv2_route" "jwt_proxy_route" {
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.cognito_jwt_authorizer.id
 }
+
 
 
 
