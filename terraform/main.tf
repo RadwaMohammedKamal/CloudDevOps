@@ -34,6 +34,7 @@ module "ecr" {
   tags         = var.tags
 }
 
+
 module "ssm" {
   source       = "./modules/ssm"
   environment  = var.environment
@@ -41,11 +42,11 @@ module "ssm" {
   tags         = var.tags
 }
 
+
 module "irsa" {
   source       = "./modules/irsa"
   environment  = var.environment
   cluster_name = module.eks.cluster_name
-
   depends_on = [module.eks]
 }
 
@@ -56,8 +57,7 @@ module "api" {
   vpc_id         = module.vpc.vpc_id
   app_port       = var.app_port
   tags           = var.tags
-  cognito_user_pool_domain    = var.cognito_user_pool_domain
-  cognito_user_pool_client_id = var.cognito_user_pool_client_id
+  region         = var.region
 }
 
 resource "aws_security_group_rule" "allow_alb_to_nodes" {
