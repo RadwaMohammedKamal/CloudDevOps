@@ -1,9 +1,3 @@
-resource "aws_cloudwatch_log_group" "eks" {
-  name              = "/aws/eks/${var.environment}-eks/cluster"
-  retention_in_days = 14
-  tags              = var.tags
-}
-
 resource "aws_eks_cluster" "this" {
   name     = "${var.environment}-eks"
   role_arn = var.eks_cluster_role_arn

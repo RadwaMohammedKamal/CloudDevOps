@@ -36,23 +36,28 @@ resource "aws_lb" "app_alb" {
 }
 
 ##########################
-# Target Group
+# Target Group (لازم HTTP)
 ##########################
 resource "aws_lb_target_group" "app_tg" {
   name        = "${var.environment}-tg"
   port        = var.app_port
-  protocol    = "TCP"
+  protocol    = "HTTP"      # ✅ اتغيرت
   vpc_id      = var.vpc_id
   target_type = "ip"
+
+  health_check {
+    protocol = "HTTP"
+    path     = "/"
+  }
 }
 
 ##########################
-# Listener للـ ALB
+# Listener للـ ALB (لازم HTTP)
 ##########################
 resource "aws_lb_listener" "app_listener" {
   load_balancer_arn = aws_lb.app_alb.arn
   port              = var.app_port
-  protocol          = "TCP"
+  protocol          = "HTTP"   # ✅ اتغيرت
 
   default_action {
     type             = "forward"
@@ -127,7 +132,7 @@ resource "aws_apigatewayv2_authorizer" "cognito_jwt_authorizer" {
 }
 
 ##########################
-# ALB Integration
+# API Gateway → ALB Integration
 ##########################
 resource "aws_apigatewayv2_integration" "alb_integration" {
   api_id                 = aws_apigatewayv2_api.http_api.id
@@ -147,7 +152,7 @@ resource "aws_apigatewayv2_stage" "default_stage" {
 }
 
 ##########################
-# Protected route: all routes
+# Protected route: كل حاجة ورا Cognito
 ##########################
 resource "aws_apigatewayv2_route" "jwt_proxy_route" {
   api_id             = aws_apigatewayv2_api.http_api.id
