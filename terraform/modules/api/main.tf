@@ -6,7 +6,7 @@ resource "aws_lb" "app_nlb" {
   load_balancer_type = "network"
   internal           = true
   subnets            = var.public_subnets
-  security_groups    = [aws_security_group.alb_sg.id]   # استخدمنا SG هنا
+  security_groups    = [aws_security_group.alb_sg.id]   
   tags               = var.tags
 }
 
