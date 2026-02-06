@@ -21,7 +21,7 @@ resource "aws_security_group" "alb_sg" {
     from_port   = var.app_port
     to_port     = var.app_port
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]   # عدّل حسب احتياجك
+    cidr_blocks = ["0.0.0.0/0"]   
   }
 
   egress {
@@ -152,7 +152,7 @@ resource "aws_apigatewayv2_integration" "nlb_integration" {
   integration_type = "HTTP_PROXY"
 
   integration_method = "ANY"
-  integration_uri    = aws_lb.app_nlb.arn
+  integration_uri    = aws_lb_listener.nlb_listener.arn
 
   connection_type = "VPC_LINK"
   connection_id   = aws_apigatewayv2_vpc_link.vpc_link.id
