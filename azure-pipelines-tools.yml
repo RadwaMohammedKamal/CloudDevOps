@@ -1,0 +1,176 @@
+trigger: none
+pr: none
+
+parameters:
+  - name: env
+    displayName: Environment
+    type: string
+    default: prod
+    values: [nonprod, prod]
+
+variables:
+  AWS_REGION: eu-north-1
+  AWS_SERVICE_CONNECTION: AWS
+
+stages:
+  - stage: DeployPlatform
+    displayName: Deploy Platform Services
+    jobs:
+      - job: DeployTools
+        displayName: Deploy Platform Tools
+        pool:
+          name: queue-radwa_mohamed
+
+        steps:
+          - checkout: self
+            persistCredentials: true
+
+          # ----------------------------
+          # Configure AWS credentials
+          # ----------------------------
+          - task: AWSShellScript@1
+            displayName: Configure AWS credentials
+            inputs:
+              awsCredentials: $(AWS_SERVICE_CONNECTION)
+              regionName: $(AWS_REGION)
+              scriptType: inline
+              inlineScript: |
+                set -euo pipefail
+                echo "AWS credentials configured"
+
+          # ----------------------------
+          # Setup cluster + kubeconfig
+          # ----------------------------
+          - task: AWSShellScript@1
+            displayName: Setup cluster + export AWS creds
+            name: setup
+            inputs:
+              awsCredentials: $(AWS_SERVICE_CONNECTION)
+              regionName: $(AWS_REGION)
+              scriptType: inline
+              inlineScript: |
+                set -euo pipefail
+
+                CLUSTER_NAME="$(aws eks list-clusters --query 'clusters[0]' --output text)"
+                if [ -z "${CLUSTER_NAME}" ] || [ "${CLUSTER_NAME}" = "None" ]; then
+                  echo "No EKS clusters found in $(AWS_REGION)"
+                  exit 1
+                fi
+
+                aws eks update-kubeconfig --region "$(AWS_REGION)" --name "${CLUSTER_NAME}"
+                kubectl config current-context
+                echo "Cluster: ${CLUSTER_NAME}"
+
+          # ----------------------------
+          # Add Helm repositories
+          # ----------------------------
+          - task: Bash@3
+            displayName: Add Helm repositories
+            env:
+              AWS_DEFAULT_REGION: $(AWS_REGION)
+            inputs:
+              targetType: inline
+              script: |
+                set -euo pipefail
+                helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+                helm repo add argo https://argoproj.github.io/argo-helm
+                helm repo add hashicorp https://helm.releases.hashicorp.com
+                helm repo add datadog https://helm.datadoghq.com
+                helm repo update
+
+          # ----------------------------
+          # Install NGINX Ingress Controller
+          # ----------------------------
+          - task: HelmDeploy@1
+            displayName: Install NGINX Ingress Controller
+            env:
+              AWS_DEFAULT_REGION: $(AWS_REGION)
+            inputs:
+              connectionType: None
+              namespace: ingress-nginx
+              command: upgrade
+              chartType: Name
+              chartName: ingress-nginx/ingress-nginx
+              releaseName: ingress-nginx
+              install: true
+              waitForExecution: true
+              arguments: >
+                --create-namespace
+                --timeout 10m
+                --set controller.service.type=LoadBalancer
+                --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"=nlb
+                --set controller.publishService.enabled=true
+                --set controller.ingressClassResource.default=true
+
+          # ----------------------------
+          # Install Vault
+          # ----------------------------
+          - task: HelmDeploy@1
+            displayName: Install Vault
+            env:
+              AWS_DEFAULT_REGION: $(AWS_REGION)
+            inputs:
+              connectionType: None
+              namespace: vault
+              command: upgrade
+              chartType: Name
+              chartName: hashicorp/vault
+              releaseName: vault
+              install: true
+              waitForExecution: true
+              arguments: >
+                --create-namespace
+                --timeout 10m
+                --set server.ha.enabled=false
+                --set ui.enabled=true
+                --set ui.serviceType=ClusterIP
+
+          # ----------------------------
+          # Install Argo CD
+          # ----------------------------
+          - task: HelmDeploy@1
+            displayName: Install Argo CD
+            env:
+              AWS_DEFAULT_REGION: $(AWS_REGION)
+            inputs:
+              connectionType: None
+              namespace: argocd
+              command: upgrade
+              chartType: Name
+              chartName: argo/argo-cd
+              releaseName: argocd
+              install: true
+              waitForExecution: true
+              arguments: >
+                --create-namespace
+                --timeout 10m
+                --set server.service.type=ClusterIP
+                --set server.ingress.enabled=true
+                --set server.ingress.ingressClassName=nginx
+
+          # ----------------------------
+          # Install Datadog Agent
+          # ----------------------------
+          - task: HelmDeploy@1
+            displayName: Install Datadog Agent
+            env:
+              AWS_DEFAULT_REGION: $(AWS_REGION)
+            inputs:
+              connectionType: None
+              namespace: datadog
+              command: upgrade
+              chartType: Name
+              chartName: datadog/datadog
+              releaseName: datadog
+              install: true
+              waitForExecution: true
+              arguments: >
+                --create-namespace
+                --timeout 10m
+                --set datadog.apiKey=CHANGEME
+                --set datadog.appKey=CHANGEME
+                --set datadog.clusterName=$(CLUSTER_NAME)
+                --set datadog.logs.enabled=true
+                --set datadog.logs.containerCollectAll=true
+                --set datadog.apm.enabled=true
+                --set datadog.processAgent.enabled=true

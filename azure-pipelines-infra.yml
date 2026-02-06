@@ -95,6 +95,11 @@ steps:
         set -euo pipefail
         cd "$(TF_DIR)"
         terraform apply -auto-approve tfplan
+        echo "================================"
+        echo "Terraform Outputs:"
+        echo "================================"
+        terraform output
+        echo "================================"
 
   # ----------------------------
   # Terraform plan destroy (runs only on destroy)
