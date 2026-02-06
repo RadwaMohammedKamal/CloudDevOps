@@ -38,7 +38,7 @@ module "ecr" {
 module "ssm" {
   source       = "./modules/ssm"
   environment  = var.environment
-  mongodb_uri  = "placeholder"
+  mongodb_uri  = var.mongodb_uri
   tags         = var.tags
 }
 

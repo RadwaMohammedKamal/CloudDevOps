@@ -14,3 +14,5 @@ tags = {
 }
 app_port = 8080
 
+
+mongodb_uri = "mongodb+srv://radwamohamed202116768_db_user:m1CEZ3RhWgb6ntPy@clouddevops-cluster.jzig5bd.mongodb.net/?appName=clouddevops-cluster"

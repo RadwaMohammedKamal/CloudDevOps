@@ -7,3 +7,8 @@ variable "private_subnet_cidrs" { type = list(string) }
 variable "data_subnet_cidrs" { type = list(string) }
 variable "tags" { type = map(string)}
 variable "app_port" { type = number }
+
+variable "mongodb_uri" {
+  description = "MongoDB connection string"
+  type        = string
+}
