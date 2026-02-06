@@ -11,7 +11,7 @@ resource "aws_lb" "app_nlb" {
 }
 
 ##########################
-# Security Group للـ NLB
+# Security Group for NLB
 ##########################
 resource "aws_security_group" "alb_sg" {
   name   = "${var.environment}-alb-sg"
@@ -60,7 +60,7 @@ resource "aws_lb_listener" "nlb_listener" {
 }
 
 ##########################
-# Security Group للـ VPC Link
+# Security Group for VPC Link
 ##########################
 resource "aws_security_group" "vpc_link_sg" {
   name   = "${var.environment}-vpc-link-sg"

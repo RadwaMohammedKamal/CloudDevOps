@@ -26,6 +26,32 @@ stages:
             persistCredentials: true
 
           # ----------------------------
+          # Install AWS CLI, kubectl, Helm
+          # ----------------------------
+          - task: Bash@3
+            displayName: Install AWS CLI, kubectl, Helm
+            inputs:
+              targetType: inline
+              script: |
+                set -euo pipefail
+
+                echo "Installing AWS CLI..."
+                curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
+                unzip -q awscliv2.zip
+                sudo ./aws/install
+                aws --version
+
+                echo "Installing kubectl..."
+                curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+                chmod +x kubectl
+                sudo mv kubectl /usr/local/bin/
+                kubectl version --client
+
+                echo "Installing Helm..."
+                curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+                helm version
+
+          # ----------------------------
           # Configure AWS credentials
           # ----------------------------
           - task: AWSShellScript@1
@@ -42,7 +68,7 @@ stages:
           # Setup cluster + kubeconfig
           # ----------------------------
           - task: AWSShellScript@1
-            displayName: Setup cluster + export AWS creds
+            displayName: Setup cluster + kubeconfig
             name: setup
             inputs:
               awsCredentials: $(AWS_SERVICE_CONNECTION)
@@ -66,8 +92,6 @@ stages:
           # ----------------------------
           - task: Bash@3
             displayName: Add Helm repositories
-            env:
-              AWS_DEFAULT_REGION: $(AWS_REGION)
             inputs:
               targetType: inline
               script: |
@@ -83,8 +107,6 @@ stages:
           # ----------------------------
           - task: HelmDeploy@1
             displayName: Install NGINX Ingress Controller
-            env:
-              AWS_DEFAULT_REGION: $(AWS_REGION)
             inputs:
               connectionType: None
               namespace: ingress-nginx
@@ -107,8 +129,6 @@ stages:
           # ----------------------------
           - task: HelmDeploy@1
             displayName: Install Vault
-            env:
-              AWS_DEFAULT_REGION: $(AWS_REGION)
             inputs:
               connectionType: None
               namespace: vault
@@ -130,8 +150,6 @@ stages:
           # ----------------------------
           - task: HelmDeploy@1
             displayName: Install Argo CD
-            env:
-              AWS_DEFAULT_REGION: $(AWS_REGION)
             inputs:
               connectionType: None
               namespace: argocd
@@ -151,26 +169,24 @@ stages:
           # ----------------------------
           # Install Datadog Agent
           # ----------------------------
-          - task: HelmDeploy@1
-            displayName: Install Datadog Agent
-            env:
-              AWS_DEFAULT_REGION: $(AWS_REGION)
-            inputs:
-              connectionType: None
-              namespace: datadog
-              command: upgrade
-              chartType: Name
-              chartName: datadog/datadog
-              releaseName: datadog
-              install: true
-              waitForExecution: true
-              arguments: >
-                --create-namespace
-                --timeout 10m
-                --set datadog.apiKey=CHANGEME
-                --set datadog.appKey=CHANGEME
-                --set datadog.clusterName=$(CLUSTER_NAME)
-                --set datadog.logs.enabled=true
-                --set datadog.logs.containerCollectAll=true
-                --set datadog.apm.enabled=true
-                --set datadog.processAgent.enabled=true
+          # - task: HelmDeploy@1
+          #   displayName: Install Datadog Agent
+          #   inputs:
+          #     connectionType: None
+          #     namespace: datadog
+          #     command: upgrade
+          #     chartType: Name
+          #     chartName: datadog/datadog
+          #     releaseName: datadog
+          #     install: true
+          #     waitForExecution: true
+          #     arguments: >
+          #       --create-namespace
+          #       --timeout 10m
+          #       --set datadog.apiKey=CHANGEME
+          #       --set datadog.appKey=CHANGEME
+          #       --set datadog.clusterName=$(CLUSTER_NAME)
+          #       --set datadog.logs.enabled=true
+          #       --set datadog.logs.containerCollectAll=true
+          #       --set datadog.apm.enabled=true
+          #       --set datadog.processAgent.enabled=true
