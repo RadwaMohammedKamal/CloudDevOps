@@ -13,6 +13,6 @@ tags = {
   env     = "nonprod"
   project = "CloudDevOps"
 }
-app_port = 8080
+# app_port = 8080
 
 

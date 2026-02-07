@@ -34,7 +34,7 @@ resource "aws_iam_role" "app_irsa" {
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {
           StringEquals = {
-            "${local.oidc_provider}:sub" = "system:serviceaccount:${var.environment}:voting-app"
+            "${local.oidc_provider}:sub" = "system:serviceaccount:${var.environment}:app"
           }
         }
       }

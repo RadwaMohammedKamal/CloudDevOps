@@ -8,6 +8,7 @@ module "vpc" {
   data_subnet_cidrs    = var.data_subnet_cidrs
   tags                 = var.tags
   app_port             = var.app_port
+  nlb_sg_id            = module.api.nlb_sg_id
 }
 
 module "iam" {
@@ -65,6 +66,6 @@ resource "aws_security_group_rule" "allow_alb_to_nodes" {
   from_port                = var.app_port
   to_port                  = var.app_port
   protocol                 = "tcp"
-  security_group_id        = module.vpc.eks_nodes_sg_id
-  source_security_group_id = module.api.alb_sg_id
+  security_group_id        = module.vpc.eks_nodes_sg_id   # SG nodes
+  source_security_group_id = module.api.nlb_sg_id # SG NLB
 }

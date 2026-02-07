@@ -100,9 +100,13 @@ resource "aws_security_group" "eks_nodes" {
   vpc_id      = aws_vpc.this.id
 
    ingress {
-    from_port                = var.app_port
-    to_port                  = var.app_port
+    # from_port                = var.app_port
+    # to_port                  = var.app_port
+    from_port       = 0
+    to_port         = 65535
     protocol                 = "tcp"
+    security_groups = [var.nlb_sg_id]
+    #  security_groups = [aws_security_group.alb_sg.id] 
     # security_groups = [aws_lb.alb.id] 
     # security_groups          = [aws_lb.nlb.security_group_id] 
   }

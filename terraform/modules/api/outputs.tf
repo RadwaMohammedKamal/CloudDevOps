@@ -2,9 +2,12 @@ output "nlb_dns" {
   value = aws_lb.app_nlb.dns_name
 }
 
-output "alb_sg_id" {
-  value = aws_security_group.alb_sg.id
+
+output "nlb_sg_id" {
+  value       = aws_security_group.nlb_sg.id
+  description = "Security group ID of the NLB"
 }
+
 
 output "vpc_link_sg_id" {
   value = aws_security_group.vpc_link_sg.id
