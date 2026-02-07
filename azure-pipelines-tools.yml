@@ -1,15 +1,6 @@
 trigger: none
 pr: none
 
-parameters:
-  - name: env
-    displayName: Environment
-    type: string
-    default: prod
-    values:
-      - nonprod
-      - prod
-
 variables:
   AWS_REGION: eu-north-1
   AWS_SERVICE_CONNECTION: AWS
@@ -30,7 +21,6 @@ steps:
       script: |
         set -euo pipefail
 
-        echo "Installing AWS CLI..."
         if ! command -v aws &> /dev/null; then
           curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
           unzip -q awscliv2.zip
@@ -38,31 +28,16 @@ steps:
         fi
         aws --version
 
-        echo "Installing kubectl..."
         curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
         chmod +x kubectl
         sudo mv kubectl /usr/local/bin/
         kubectl version --client
 
-        echo "Installing Helm..."
         curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
         helm version
 
   # ----------------------------
-  # Configure AWS credentials
-  # ----------------------------
-  - task: AWSShellScript@1
-    displayName: Configure AWS credentials
-    inputs:
-      awsCredentials: $(AWS_SERVICE_CONNECTION)
-      regionName: $(AWS_REGION)
-      scriptType: inline
-      inlineScript: |
-        set -euo pipefail
-        aws sts get-caller-identity
-
-  # ----------------------------
-  # Setup kubeconfig for EKS
+  # Setup kubeconfig (WITH AWS CREDS)
   # ----------------------------
   - task: AWSShellScript@1
     displayName: Setup EKS kubeconfig
@@ -74,43 +49,46 @@ steps:
         set -euo pipefail
 
         CLUSTER_NAME=$(aws eks list-clusters --query "clusters[0]" --output text)
-        echo "Using cluster: ${CLUSTER_NAME}"
+        echo "Cluster: $CLUSTER_NAME"
 
         aws eks update-kubeconfig \
           --region $(AWS_REGION) \
-          --name "${CLUSTER_NAME}"
+          --name "$CLUSTER_NAME"
 
         kubectl get nodes
 
   # ----------------------------
-  # Add Helm repositories
+  # Add Helm repos (WITH AWS CREDS)
   # ----------------------------
-  - task: Bash@3
-    displayName: Add Helm repositories
+  - task: AWSShellScript@1
+    displayName: Add Helm repos
     inputs:
-      targetType: inline
-      script: |
+      awsCredentials: $(AWS_SERVICE_CONNECTION)
+      regionName: $(AWS_REGION)
+      scriptType: inline
+      inlineScript: |
         set -euo pipefail
-
         helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
         helm repo add argo https://argoproj.github.io/argo-helm
         helm repo update
 
   # ----------------------------
-  # Install NGINX Ingress Controller
+  # Install NGINX Ingress Controller (FIX)
   # ----------------------------
-  - task: Bash@3
+  - task: AWSShellScript@1
     displayName: Install NGINX Ingress Controller
     inputs:
-      targetType: inline
-      script: |
+      awsCredentials: $(AWS_SERVICE_CONNECTION)
+      regionName: $(AWS_REGION)
+      scriptType: inline
+      inlineScript: |
         set -euo pipefail
 
         helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
           --namespace ingress-nginx \
           --create-namespace \
-          --timeout 10m \
           --wait \
+          --timeout 10m \
           --set controller.publishService.enabled=true \
           --set controller.ingressClassResource.default=true
 
@@ -119,18 +97,20 @@ steps:
   # ----------------------------
   # Install Argo CD
   # ----------------------------
-  - task: Bash@3
+  - task: AWSShellScript@1
     displayName: Install Argo CD
     inputs:
-      targetType: inline
-      script: |
+      awsCredentials: $(AWS_SERVICE_CONNECTION)
+      regionName: $(AWS_REGION)
+      scriptType: inline
+      inlineScript: |
         set -euo pipefail
 
         helm upgrade --install argocd argo/argo-cd \
           --namespace argocd \
           --create-namespace \
-          --timeout 10m \
           --wait \
+          --timeout 10m \
           --set server.service.type=ClusterIP \
           --set server.ingress.enabled=true \
           --set server.ingress.ingressClassName=nginx
