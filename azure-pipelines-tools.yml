@@ -15,7 +15,7 @@ variables:
   AWS_SERVICE_CONNECTION: AWS
 
 pool:
-  nvmImage: ubuntu-latest
+  vmImage: ubuntu-latest
 
 steps:
   - checkout: self
@@ -30,27 +30,25 @@ steps:
       script: |
         set -euo pipefail
 
-        echo "Checking AWS CLI..."
+        echo "Installing / Updating AWS CLI..."
         if command -v aws >/dev/null 2>&1; then
-          aws --version
+          sudo /usr/local/aws-cli/v2/current/bin/aws --version || true
+          sudo ./aws/install --update || true
         else
           curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
           unzip -q awscliv2.zip
           sudo ./aws/install
         fi
+        aws --version
 
-        echo "Checking kubectl..."
-        if ! command -v kubectl >/dev/null 2>&1; then
-          curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-        fi
+        echo "Installing kubectl..."
+        curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
         kubectl version --client
 
-        echo "Checking Helm..."
-        if ! command -v helm >/dev/null 2>&1; then
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-        fi
+        echo "Installing Helm..."
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
         helm version
 
   # ----------------------------
@@ -63,13 +61,14 @@ steps:
       regionName: $(AWS_REGION)
       scriptType: inline
       inlineScript: |
+        set -euo pipefail
         echo "AWS credentials configured"
 
   # ----------------------------
-  # Setup kubeconfig (EKS)
+  # Setup EKS kubeconfig
   # ----------------------------
   - task: AWSShellScript@1
-    displayName: Setup kubeconfig
+    displayName: Setup EKS kubeconfig
     inputs:
       awsCredentials: $(AWS_SERVICE_CONNECTION)
       regionName: $(AWS_REGION)
@@ -78,12 +77,13 @@ steps:
         set -euo pipefail
 
         CLUSTER_NAME=$(aws eks list-clusters --query 'clusters[0]' --output text)
-        echo "Using cluster: $CLUSTER_NAME"
+        if [ -z "$CLUSTER_NAME" ] || [ "$CLUSTER_NAME" = "None" ]; then
+          echo "❌ No EKS cluster found"
+          exit 1
+        fi
 
-        aws eks update-kubeconfig \
-          --region $(AWS_REGION) \
-          --name $CLUSTER_NAME
-
+        aws eks update-kubeconfig --region $(AWS_REGION) --name $CLUSTER_NAME
+        kubectl config current-context
         kubectl get nodes
 
   # ----------------------------
@@ -94,12 +94,13 @@ steps:
     inputs:
       targetType: inline
       script: |
+        set -euo pipefail
         helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
         helm repo add argo https://argoproj.github.io/argo-helm
         helm repo update
 
   # ----------------------------
-  # Install NGINX Ingress Controller (NLB)
+  # Install NGINX Ingress Controller
   # ----------------------------
   - task: HelmDeploy@1
     displayName: Install NGINX Ingress Controller
@@ -115,8 +116,6 @@ steps:
       arguments: >
         --create-namespace
         --timeout 10m
-        --set controller.service.type=LoadBalancer
-        --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"=nlb
         --set controller.publishService.enabled=true
         --set controller.ingressClassResource.default=true
 
