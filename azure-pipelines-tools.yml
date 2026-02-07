@@ -6,20 +6,22 @@ parameters:
     displayName: Environment
     type: string
     default: prod
-    values: [nonprod, prod]
+    values:
+      - nonprod
+      - prod
 
 variables:
   AWS_REGION: eu-north-1
   AWS_SERVICE_CONNECTION: AWS
 
 stages:
-  - stage: DeployPlatform
-    displayName: Deploy Platform Services
+  - stage: DeployClusterTools
+    displayName: Deploy Cluster Tools
     jobs:
-      - job: DeployTools
-        displayName: Deploy Platform Tools
+      - job: InstallToolsAndApps
+        displayName: Install Tools and Apps
         pool:
-          name: queue-radwa_mohamed
+          vmImage: ubuntu-latest
 
         steps:
           - checkout: self
@@ -65,24 +67,21 @@ stages:
                 echo "AWS credentials configured"
 
           # ----------------------------
-          # Setup cluster + kubeconfig
+          # Setup kubeconfig for EKS cluster
           # ----------------------------
           - task: AWSShellScript@1
             displayName: Setup cluster + kubeconfig
-            name: setup
             inputs:
               awsCredentials: $(AWS_SERVICE_CONNECTION)
               regionName: $(AWS_REGION)
               scriptType: inline
               inlineScript: |
                 set -euo pipefail
-
                 CLUSTER_NAME="$(aws eks list-clusters --query 'clusters[0]' --output text)"
                 if [ -z "${CLUSTER_NAME}" ] || [ "${CLUSTER_NAME}" = "None" ]; then
                   echo "No EKS clusters found in $(AWS_REGION)"
                   exit 1
                 fi
-
                 aws eks update-kubeconfig --region "$(AWS_REGION)" --name "${CLUSTER_NAME}"
                 kubectl config current-context
                 echo "Cluster: ${CLUSTER_NAME}"
@@ -98,8 +97,6 @@ stages:
                 set -euo pipefail
                 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
                 helm repo add argo https://argoproj.github.io/argo-helm
-                helm repo add hashicorp https://helm.releases.hashicorp.com
-                helm repo add datadog https://helm.datadoghq.com
                 helm repo update
 
           # ----------------------------
@@ -125,27 +122,6 @@ stages:
                 --set controller.ingressClassResource.default=true
 
           # ----------------------------
-          # Install Vault
-          # ----------------------------
-          - task: HelmDeploy@1
-            displayName: Install Vault
-            inputs:
-              connectionType: None
-              namespace: vault
-              command: upgrade
-              chartType: Name
-              chartName: hashicorp/vault
-              releaseName: vault
-              install: true
-              waitForExecution: true
-              arguments: >
-                --create-namespace
-                --timeout 10m
-                --set server.ha.enabled=false
-                --set ui.enabled=true
-                --set ui.serviceType=ClusterIP
-
-          # ----------------------------
           # Install Argo CD
           # ----------------------------
           - task: HelmDeploy@1
@@ -165,28 +141,3 @@ stages:
                 --set server.service.type=ClusterIP
                 --set server.ingress.enabled=true
                 --set server.ingress.ingressClassName=nginx
-
-          # ----------------------------
-          # Install Datadog Agent
-          # ----------------------------
-          # - task: HelmDeploy@1
-          #   displayName: Install Datadog Agent
-          #   inputs:
-          #     connectionType: None
-          #     namespace: datadog
-          #     command: upgrade
-          #     chartType: Name
-          #     chartName: datadog/datadog
-          #     releaseName: datadog
-          #     install: true
-          #     waitForExecution: true
-          #     arguments: >
-          #       --create-namespace
-          #       --timeout 10m
-          #       --set datadog.apiKey=CHANGEME
-          #       --set datadog.appKey=CHANGEME
-          #       --set datadog.clusterName=$(CLUSTER_NAME)
-          #       --set datadog.logs.enabled=true
-          #       --set datadog.logs.containerCollectAll=true
-          #       --set datadog.apm.enabled=true
-          #       --set datadog.processAgent.enabled=true
