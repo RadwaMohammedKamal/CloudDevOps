@@ -104,25 +104,85 @@ steps:
 
         kubectl get pods -n ingress-nginx
 
-  # ----------------------------
-  # Install Argo CD
-  # ----------------------------
-  - task: AWSShellScript@1
-    displayName: Install Argo CD
-    inputs:
-      awsCredentials: $(AWS_SERVICE_CONNECTION)
-      regionName: $(AWS_REGION)
-      scriptType: inline
-      inlineScript: |
-        set -euo pipefail
+  # # ----------------------------
+  # # Install Argo CD
+  # # ----------------------------
+  # - task: AWSShellScript@1
+  #   displayName: Install Argo CD
+  #   inputs:
+  #     awsCredentials: $(AWS_SERVICE_CONNECTION)
+  #     regionName: $(AWS_REGION)
+  #     scriptType: inline
+  #     inlineScript: |
+  #       set -euo pipefail
 
-        helm upgrade --install argocd argo/argo-cd \
-          --namespace argocd \
-          --create-namespace \
-          --wait \
-          --timeout 10m \
-          --set server.service.type=ClusterIP \
-          --set server.ingress.enabled=true \
-          --set server.ingress.ingressClassName=nginx
+  #       helm upgrade --install argocd argo/argo-cd \
+  #         --namespace argocd \
+  #         --create-namespace \
+  #         --wait \
+  #         --timeout 10m \
+  #         --set server.service.type=ClusterIP \
+  #         --set server.ingress.enabled=true \
+  #         --set server.ingress.ingressClassName=nginx
 
-        kubectl get pods -n argocd
+  #       kubectl get pods -n argocd
+
+
+# ----------------------------
+# Install Argo CD + Ingress
+# ----------------------------
+- task: AWSShellScript@1
+  displayName: Install Argo CD & Ingress
+  inputs:
+    awsCredentials: $(AWS_SERVICE_CONNECTION)
+    regionName: $(AWS_REGION)
+    scriptType: inline
+    inlineScript: |
+      set -euo pipefail
+
+      # ----------------------------
+      # Install Argo CD with Helm
+      # ----------------------------
+      helm upgrade --install argocd argo/argo-cd \
+        --namespace argocd \
+        --create-namespace \
+        --wait \
+        --timeout 10m \
+        --set server.service.type=ClusterIP \
+        --set server.ingress.enabled=false  # هيكون عندنا ingress يدوي
+
+      # ----------------------------
+      # Create Ingress for Argo CD
+      # ----------------------------
+      cat <<EOF | kubectl apply -f -
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: argocd-ingress
+        namespace: argocd
+        annotations:
+          kubernetes.io/ingress.class: "nginx"
+      spec:
+        rules:
+          - host: argocd.${ENV}.yourdomain.com   # حطي domain أو subdomain مناسب
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: argocd-server
+                      port:
+                        number: 80
+      EOF
+
+      # ----------------------------
+      # Wait for Ingress IP
+      # ----------------------------
+      echo "Waiting for Ingress to get IP..."
+      while ! kubectl get ingress argocd-ingress -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}' | grep -q '[0-9]'; do
+        sleep 5
+      done
+
+      INGRESS_IP=$(kubectl get ingress argocd-ingress -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+      echo "Argo CD should be reachable at: http://${INGRESS_IP}"
