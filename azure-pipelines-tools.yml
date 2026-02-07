@@ -14,130 +14,129 @@ variables:
   AWS_REGION: eu-north-1
   AWS_SERVICE_CONNECTION: AWS
 
-stages:
-  - stage: DeployClusterTools
-    displayName: Deploy Cluster Tools
-    jobs:
-      - job: InstallToolsAndApps
-        displayName: Install Tools and Apps
-        pool:
-          vmImage: ubuntu-latest
+pool:
+  nvmImage: ubuntu-latest
 
-        steps:
-          - checkout: self
-            persistCredentials: true
+steps:
+  - checkout: self
 
-          # ----------------------------
-          # Install AWS CLI, kubectl, Helm
-          # ----------------------------
-          - task: Bash@3
-            displayName: Install AWS CLI, kubectl, Helm
-            inputs:
-              targetType: inline
-              script: |
-                set -euo pipefail
+  # ----------------------------
+  # Install AWS CLI, kubectl, Helm
+  # ----------------------------
+  - task: Bash@3
+    displayName: Install AWS CLI, kubectl, Helm
+    inputs:
+      targetType: inline
+      script: |
+        set -euo pipefail
 
-                echo "Installing AWS CLI..."
-                curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
-                unzip -q awscliv2.zip
-                sudo ./aws/install
-                aws --version
+        echo "Checking AWS CLI..."
+        if command -v aws >/dev/null 2>&1; then
+          aws --version
+        else
+          curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
+          unzip -q awscliv2.zip
+          sudo ./aws/install
+        fi
 
-                echo "Installing kubectl..."
-                curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
-                chmod +x kubectl
-                sudo mv kubectl /usr/local/bin/
-                kubectl version --client
+        echo "Checking kubectl..."
+        if ! command -v kubectl >/dev/null 2>&1; then
+          curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+        fi
+        kubectl version --client
 
-                echo "Installing Helm..."
-                curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-                helm version
+        echo "Checking Helm..."
+        if ! command -v helm >/dev/null 2>&1; then
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        fi
+        helm version
 
-          # ----------------------------
-          # Configure AWS credentials
-          # ----------------------------
-          - task: AWSShellScript@1
-            displayName: Configure AWS credentials
-            inputs:
-              awsCredentials: $(AWS_SERVICE_CONNECTION)
-              regionName: $(AWS_REGION)
-              scriptType: inline
-              inlineScript: |
-                set -euo pipefail
-                echo "AWS credentials configured"
+  # ----------------------------
+  # Configure AWS credentials
+  # ----------------------------
+  - task: AWSShellScript@1
+    displayName: Configure AWS credentials
+    inputs:
+      awsCredentials: $(AWS_SERVICE_CONNECTION)
+      regionName: $(AWS_REGION)
+      scriptType: inline
+      inlineScript: |
+        echo "AWS credentials configured"
 
-          # ----------------------------
-          # Setup kubeconfig for EKS cluster
-          # ----------------------------
-          - task: AWSShellScript@1
-            displayName: Setup cluster + kubeconfig
-            inputs:
-              awsCredentials: $(AWS_SERVICE_CONNECTION)
-              regionName: $(AWS_REGION)
-              scriptType: inline
-              inlineScript: |
-                set -euo pipefail
-                CLUSTER_NAME="$(aws eks list-clusters --query 'clusters[0]' --output text)"
-                if [ -z "${CLUSTER_NAME}" ] || [ "${CLUSTER_NAME}" = "None" ]; then
-                  echo "No EKS clusters found in $(AWS_REGION)"
-                  exit 1
-                fi
-                aws eks update-kubeconfig --region "$(AWS_REGION)" --name "${CLUSTER_NAME}"
-                kubectl config current-context
-                echo "Cluster: ${CLUSTER_NAME}"
+  # ----------------------------
+  # Setup kubeconfig (EKS)
+  # ----------------------------
+  - task: AWSShellScript@1
+    displayName: Setup kubeconfig
+    inputs:
+      awsCredentials: $(AWS_SERVICE_CONNECTION)
+      regionName: $(AWS_REGION)
+      scriptType: inline
+      inlineScript: |
+        set -euo pipefail
 
-          # ----------------------------
-          # Add Helm repositories
-          # ----------------------------
-          - task: Bash@3
-            displayName: Add Helm repositories
-            inputs:
-              targetType: inline
-              script: |
-                set -euo pipefail
-                helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-                helm repo add argo https://argoproj.github.io/argo-helm
-                helm repo update
+        CLUSTER_NAME=$(aws eks list-clusters --query 'clusters[0]' --output text)
+        echo "Using cluster: $CLUSTER_NAME"
 
-          # ----------------------------
-          # Install NGINX Ingress Controller
-          # ----------------------------
-          - task: HelmDeploy@1
-            displayName: Install NGINX Ingress Controller
-            inputs:
-              connectionType: None
-              namespace: ingress-nginx
-              command: upgrade
-              chartType: Name
-              chartName: ingress-nginx/ingress-nginx
-              releaseName: ingress-nginx
-              install: true
-              waitForExecution: true
-              arguments: >
-                --create-namespace
-                --timeout 10m
-                --set controller.service.type=LoadBalancer
-                --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"=nlb
-                --set controller.publishService.enabled=true
-                --set controller.ingressClassResource.default=true
+        aws eks update-kubeconfig \
+          --region $(AWS_REGION) \
+          --name $CLUSTER_NAME
 
-          # ----------------------------
-          # Install Argo CD
-          # ----------------------------
-          - task: HelmDeploy@1
-            displayName: Install Argo CD
-            inputs:
-              connectionType: None
-              namespace: argocd
-              command: upgrade
-              chartType: Name
-              chartName: argo/argo-cd
-              releaseName: argocd
-              install: true
-              waitForExecution: true
-              arguments: >
-                --create-namespace
-                --timeout 10m
-                --set server.service.type=ClusterIP
-                --set server.ingress.enabled=true
-                --set server.ingress.ingressClassName=nginx
+        kubectl get nodes
+
+  # ----------------------------
+  # Add Helm repos
+  # ----------------------------
+  - task: Bash@3
+    displayName: Add Helm repositories
+    inputs:
+      targetType: inline
+      script: |
+        helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+        helm repo add argo https://argoproj.github.io/argo-helm
+        helm repo update
+
+  # ----------------------------
+  # Install NGINX Ingress Controller (NLB)
+  # ----------------------------
+  - task: HelmDeploy@1
+    displayName: Install NGINX Ingress Controller
+    inputs:
+      connectionType: None
+      namespace: ingress-nginx
+      command: upgrade
+      chartType: Name
+      chartName: ingress-nginx/ingress-nginx
+      releaseName: ingress-nginx
+      install: true
+      waitForExecution: true
+      arguments: >
+        --create-namespace
+        --timeout 10m
+        --set controller.service.type=LoadBalancer
+        --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"=nlb
+        --set controller.publishService.enabled=true
+        --set controller.ingressClassResource.default=true
+
+  # ----------------------------
+  # Install Argo CD
+  # ----------------------------
+  - task: HelmDeploy@1
+    displayName: Install Argo CD
+    inputs:
+      connectionType: None
+      namespace: argocd
+      command: upgrade
+      chartType: Name
+      chartName: argo/argo-cd
+      releaseName: argocd
+      install: true
+      waitForExecution: true
+      arguments: >
+        --create-namespace
+        --timeout 10m
+        --set server.service.type=ClusterIP
+        --set server.ingress.enabled=true
+        --set server.ingress.ingressClassName=nginx
