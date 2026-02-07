@@ -1,9 +1,19 @@
 trigger: none
 pr: none
 
+parameters:
+  - name: env
+    displayName: Environment
+    type: string
+    default: prod
+    values:
+      - nonprod
+      - prod
+
 variables:
   AWS_REGION: eu-north-1
   AWS_SERVICE_CONNECTION: AWS
+  ENV: ${{ parameters.env }}
 
 pool:
   vmImage: ubuntu-latest
@@ -37,7 +47,7 @@ steps:
         helm version
 
   # ----------------------------
-  # Setup kubeconfig (WITH AWS CREDS)
+  # Setup kubeconfig (PROD / NONPROD)
   # ----------------------------
   - task: AWSShellScript@1
     displayName: Setup EKS kubeconfig
@@ -48,8 +58,8 @@ steps:
       inlineScript: |
         set -euo pipefail
 
-        CLUSTER_NAME=$(aws eks list-clusters --query "clusters[0]" --output text)
-        echo "Cluster: $CLUSTER_NAME"
+        CLUSTER_NAME="${ENV}-eks"
+        echo "Using cluster: $CLUSTER_NAME"
 
         aws eks update-kubeconfig \
           --region $(AWS_REGION) \
@@ -58,7 +68,7 @@ steps:
         kubectl get nodes
 
   # ----------------------------
-  # Add Helm repos (WITH AWS CREDS)
+  # Add Helm repos
   # ----------------------------
   - task: AWSShellScript@1
     displayName: Add Helm repos
@@ -73,7 +83,7 @@ steps:
         helm repo update
 
   # ----------------------------
-  # Install NGINX Ingress Controller (FIX)
+  # Install NGINX Ingress Controller
   # ----------------------------
   - task: AWSShellScript@1
     displayName: Install NGINX Ingress Controller
