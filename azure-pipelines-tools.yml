@@ -30,14 +30,11 @@ steps:
       script: |
         set -euo pipefail
 
-        echo "Installing / Updating AWS CLI..."
-        if command -v aws >/dev/null 2>&1; then
-          sudo /usr/local/aws-cli/v2/current/bin/aws --version || true
-          sudo ./aws/install --update || true
-        else
+        echo "Installing AWS CLI..."
+        if ! command -v aws &> /dev/null; then
           curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
           unzip -q awscliv2.zip
-          sudo ./aws/install
+          sudo ./aws/install --update
         fi
         aws --version
 
@@ -62,10 +59,10 @@ steps:
       scriptType: inline
       inlineScript: |
         set -euo pipefail
-        echo "AWS credentials configured"
+        aws sts get-caller-identity
 
   # ----------------------------
-  # Setup EKS kubeconfig
+  # Setup kubeconfig for EKS
   # ----------------------------
   - task: AWSShellScript@1
     displayName: Setup EKS kubeconfig
@@ -76,18 +73,17 @@ steps:
       inlineScript: |
         set -euo pipefail
 
-        CLUSTER_NAME=$(aws eks list-clusters --query 'clusters[0]' --output text)
-        if [ -z "$CLUSTER_NAME" ] || [ "$CLUSTER_NAME" = "None" ]; then
-          echo "❌ No EKS cluster found"
-          exit 1
-        fi
+        CLUSTER_NAME=$(aws eks list-clusters --query "clusters[0]" --output text)
+        echo "Using cluster: ${CLUSTER_NAME}"
 
-        aws eks update-kubeconfig --region $(AWS_REGION) --name $CLUSTER_NAME
-        kubectl config current-context
+        aws eks update-kubeconfig \
+          --region $(AWS_REGION) \
+          --name "${CLUSTER_NAME}"
+
         kubectl get nodes
 
   # ----------------------------
-  # Add Helm repos
+  # Add Helm repositories
   # ----------------------------
   - task: Bash@3
     displayName: Add Helm repositories
@@ -95,6 +91,7 @@ steps:
       targetType: inline
       script: |
         set -euo pipefail
+
         helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
         helm repo add argo https://argoproj.github.io/argo-helm
         helm repo update
@@ -102,40 +99,40 @@ steps:
   # ----------------------------
   # Install NGINX Ingress Controller
   # ----------------------------
-  - task: HelmDeploy@1
+  - task: Bash@3
     displayName: Install NGINX Ingress Controller
     inputs:
-      connectionType: None
-      namespace: ingress-nginx
-      command: upgrade
-      chartType: Name
-      chartName: ingress-nginx/ingress-nginx
-      releaseName: ingress-nginx
-      install: true
-      waitForExecution: true
-      arguments: >
-        --create-namespace
-        --timeout 10m
-        --set controller.publishService.enabled=true
-        --set controller.ingressClassResource.default=true
+      targetType: inline
+      script: |
+        set -euo pipefail
+
+        helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+          --namespace ingress-nginx \
+          --create-namespace \
+          --timeout 10m \
+          --wait \
+          --set controller.publishService.enabled=true \
+          --set controller.ingressClassResource.default=true
+
+        kubectl get pods -n ingress-nginx
 
   # ----------------------------
   # Install Argo CD
   # ----------------------------
-  - task: HelmDeploy@1
+  - task: Bash@3
     displayName: Install Argo CD
     inputs:
-      connectionType: None
-      namespace: argocd
-      command: upgrade
-      chartType: Name
-      chartName: argo/argo-cd
-      releaseName: argocd
-      install: true
-      waitForExecution: true
-      arguments: >
-        --create-namespace
-        --timeout 10m
-        --set server.service.type=ClusterIP
-        --set server.ingress.enabled=true
-        --set server.ingress.ingressClassName=nginx
+      targetType: inline
+      script: |
+        set -euo pipefail
+
+        helm upgrade --install argocd argo/argo-cd \
+          --namespace argocd \
+          --create-namespace \
+          --timeout 10m \
+          --wait \
+          --set server.service.type=ClusterIP \
+          --set server.ingress.enabled=true \
+          --set server.ingress.ingressClassName=nginx
+
+        kubectl get pods -n argocd
