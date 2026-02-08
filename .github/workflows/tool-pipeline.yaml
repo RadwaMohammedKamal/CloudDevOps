@@ -75,21 +75,12 @@ jobs:
         id: tf_outputs
         run: |
           set -euo pipefail
-          echo "Fetching NLB outputs..."
           NLB_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_arn || true)
           NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn || true)
 
-          if [ -n "$NLB_ARN" ]; then
-            echo "NLB_ARN<<EOF" >> $GITHUB_OUTPUT
-            echo "$NLB_ARN" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          fi
-
-          if [ -n "$NLB_TG_ARN" ]; then
-            echo "NLB_TG_ARN<<EOF" >> $GITHUB_OUTPUT
-            echo "$NLB_TG_ARN" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          fi
+          # فقط القيمة نفسها
+          echo "NLB_ARN=$NLB_ARN" >> $GITHUB_OUTPUT
+          echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
 
       - name: Add Helm repos
         run: |
@@ -109,7 +100,8 @@ jobs:
             --set controller.publishService.enabled=true \
             --set controller.ingressClassResource.default=true \
             --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
-            --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-target-group-arn"="${{ steps.tf_outputs.outputs.NLB_TG_ARN }}"
+            --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-target-group-arn"="${{ steps.tf_outputs.outputs.NLB_TG_ARN }}" \
+            --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-target-type"="ip"
 
           kubectl get pods -n $NAMESPACE
           kubectl get svc -n $NAMESPACE
