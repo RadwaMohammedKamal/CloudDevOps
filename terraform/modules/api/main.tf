@@ -42,7 +42,7 @@ resource "aws_lb_target_group" "app_tg" {
   port        = var.app_port
   protocol    = "TCP"
   vpc_id      = var.vpc_id
-  target_type = "instance"
+  target_type = "ip"
 
   lifecycle {
     prevent_destroy = false
