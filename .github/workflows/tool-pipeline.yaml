@@ -75,9 +75,9 @@ jobs:
         id: tf_outputs
         run: |
           set -euo pipefail
-          # نجيب فقط القيمة الصافية بدون أي debug
-          NLB_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_arn | tr -d '\r\n')
-          NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn | tr -d '\r\n')
+          # Use JSON output + jq to remove extra debug info
+          NLB_ARN=$(terraform -chdir=${TF_DIR} output -json nlb_arn | jq -r '.')
+          NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -json nlb_tg_arn | jq -r '.')
 
           echo "NLB_ARN=$NLB_ARN" >> $GITHUB_OUTPUT
           echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
