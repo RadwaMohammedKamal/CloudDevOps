@@ -58,7 +58,7 @@ jobs:
           CLUSTER_NAME="${ENV}-eks"
           echo "Using cluster: $CLUSTER_NAME"
           aws eks update-kubeconfig --region $AWS_REGION --name "$CLUSTER_NAME"
-          kubectl get nodes
+          kubectl get nodes -o wide
 
       - name: Add Helm repos
         run: |
@@ -97,20 +97,23 @@ jobs:
           kubectl get pods -n $NAMESPACE
           kubectl get ingress -n $NAMESPACE
 
-      - name: Capture IPs for Terraform
+      - name: Capture IPs for Terraform / Outputs
         id: capture_ips
         run: |
           set -euo pipefail
+
           # NGINX Service
           NGINX_CLUSTER_IP=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.spec.clusterIP}')
           NGINX_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           
-          # ArgoCD Ingress
+          # ArgoCD ClusterIP
           ARGOCD_CLUSTER_IP=$(kubectl get svc argocd-server -n $NAMESPACE -o jsonpath='{.spec.clusterIP}')
 
-          echo "NGINX_CLUSTER_IP=$NGINX_CLUSTER_IP"
-          echo "NGINX_EXTERNAL_IP=$NGINX_EXTERNAL_IP"
-          echo "ARGOCD_CLUSTER_IP=$ARGOCD_CLUSTER_IP"
+          # Print to console
+          echo "=== Captured IPs ==="
+          echo "NGINX Cluster IP: $NGINX_CLUSTER_IP"
+          echo "NGINX External IP: $NGINX_EXTERNAL_IP"
+          echo "ArgoCD Cluster IP: $ARGOCD_CLUSTER_IP"
 
           # Set GitHub Actions outputs
           echo "nginx_cluster_ip=$NGINX_CLUSTER_IP" >> $GITHUB_OUTPUT
