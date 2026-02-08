@@ -27,7 +27,6 @@ jobs:
       - name: Install AWS CLI, kubectl, Helm
         run: |
           set -euo pipefail
-
           # AWS CLI
           if ! command -v aws &> /dev/null; then
             curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
@@ -45,6 +44,11 @@ jobs:
           # Helm
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           helm version
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "latest"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -72,14 +76,11 @@ jobs:
         id: tf_outputs
         run: |
           set -euo pipefail
-          echo "Initializing Terraform..."
-          terraform -chdir=terraform init -input=false
           echo "Fetching NLB outputs from Terraform..."
           NLB_ARN=$(terraform -chdir=terraform output -raw nlb_arn)
           NLB_TG_ARN=$(terraform -chdir=terraform output -raw nlb_tg_arn)
           echo "NLB_ARN=$NLB_ARN" >> $GITHUB_OUTPUT
           echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
-        shell: bash
 
       - name: Install NGINX Ingress Controller
         run: |
@@ -93,7 +94,6 @@ jobs:
             --set controller.ingressClassResource.default=true \
             --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
             --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-target-group-arn"="${{ steps.tf_outputs.outputs.NLB_TG_ARN }}"
-
           kubectl get pods -n $NAMESPACE
           kubectl get svc -n $NAMESPACE
 
