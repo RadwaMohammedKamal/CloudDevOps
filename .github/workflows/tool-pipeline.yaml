@@ -19,6 +19,8 @@ jobs:
       AWS_REGION: eu-north-1
       ENV: ${{ github.event.inputs.env }}
       NAMESPACE: prod
+      TF_DIR: terraform
+      TF_VAR_FILE: ${{ github.event.inputs.env }}.tfvars
 
     steps:
       - name: Checkout repository
@@ -64,29 +66,30 @@ jobs:
           aws eks update-kubeconfig --region $AWS_REGION --name "$CLUSTER_NAME"
           kubectl get nodes -o wide
 
-      - name: Terraform Init (without apply)
+      - name: Terraform init (without apply)
         run: |
           set -euo pipefail
-          terraform -chdir=terraform init
+          terraform -chdir=${TF_DIR} init
 
       - name: Get Terraform outputs safely
         id: tf_outputs
         run: |
           set -euo pipefail
-          echo "Fetching NLB outputs from Terraform..."
-          NLB_ARN=$(terraform -chdir=terraform output -raw nlb_arn || true)
-          NLB_TG_ARN=$(terraform -chdir=terraform output -raw nlb_tg_arn || true)
+          echo "Fetching NLB outputs..."
+          NLB_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_arn || true)
+          NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn || true)
 
-          if [ -z "$NLB_ARN" ] || [ -z "$NLB_TG_ARN" ]; then
-            echo "WARNING: NLB outputs are empty. Skipping setting GitHub outputs."
-          else
+          if [ -n "$NLB_ARN" ]; then
             echo "NLB_ARN<<EOF" >> $GITHUB_OUTPUT
             echo "$NLB_ARN" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
+          fi
 
+          if [ -n "$NLB_TG_ARN" ]; then
             echo "NLB_TG_ARN<<EOF" >> $GITHUB_OUTPUT
             echo "$NLB_TG_ARN" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
+          fi
 
       - name: Add Helm repos
         run: |
