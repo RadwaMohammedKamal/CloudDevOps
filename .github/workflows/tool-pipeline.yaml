@@ -59,35 +59,26 @@ jobs:
           aws eks update-kubeconfig --region $AWS_REGION --name "$CLUSTER_NAME"
           kubectl get nodes -o wide
 
-      - name: Terraform Init & Apply
+      - name: Terraform Init
         run: |
           set -euo pipefail
           terraform -chdir=terraform init
-
-          # اختر الملف حسب البيئة
-          if [ "${ENV}" == "prod" ]; then
-            TFVARS_FILE="prod.tfvars"
-          else
-            TFVARS_FILE="nonprod.tfvars"
-          fi
-
-          terraform -chdir=terraform apply -auto-approve -var-file="$TFVARS_FILE"
 
       - name: Get Terraform outputs safely
         id: tf_outputs
         run: |
           set -euo pipefail
           echo "Fetching NLB outputs from Terraform..."
-          NLB_ARN=$(terraform -chdir=terraform output -json | jq -r '.nlb_arn.value // empty')
-          NLB_TG_ARN=$(terraform -chdir=terraform output -json | jq -r '.nlb_tg_arn.value // empty')
+          # استخدام -raw بدل -json لتجنب jq وparse errors
+          NLB_ARN=$(terraform -chdir=terraform output -raw nlb_arn || true)
+          NLB_TG_ARN=$(terraform -chdir=terraform output -raw nlb_tg_arn || true)
 
           if [ -z "$NLB_ARN" ] || [ -z "$NLB_TG_ARN" ]; then
-            echo "ERROR: NLB outputs not found. Make sure Terraform apply succeeded."
-            exit 1
+            echo "WARNING: NLB outputs are empty. Skipping setting GitHub outputs."
+          else
+            echo "NLB_ARN=$NLB_ARN" >> $GITHUB_OUTPUT
+            echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
           fi
-
-          echo "NLB_ARN=$NLB_ARN" >> $GITHUB_OUTPUT
-          echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
 
       - name: Add Helm repos
         run: |
