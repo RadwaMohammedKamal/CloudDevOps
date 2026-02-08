@@ -65,6 +65,11 @@ jobs:
           aws eks update-kubeconfig --region $AWS_REGION --name "$CLUSTER_NAME"
           kubectl get nodes -o wide
 
+      - name: Terraform Init
+        run: |
+          set -euo pipefail
+          terraform -chdir=terraform init
+
       - name: Get Terraform outputs
         id: tf_outputs
         run: |
