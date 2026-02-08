@@ -1,3 +1,8 @@
+
+
+
+
+
 ##########################
 # NLB
 ##########################
@@ -62,6 +67,7 @@ resource "aws_lb_listener" "nlb_listener" {
     target_group_arn = aws_lb_target_group.app_tg.arn
   }
 
+  # Listener يعتمد على Target Group
   depends_on = [aws_lb_target_group.app_tg]
 }
 
@@ -129,7 +135,8 @@ resource "aws_cognito_user_pool_client" "user_pool_client" {
   explicit_auth_flows = [
     "ALLOW_USER_PASSWORD_AUTH",
     "ALLOW_REFRESH_TOKEN_AUTH",
-    "ALLOW_USER_SRP_AUTH"
+    "ALLOW_USER_SRP_AUTH",
+    "ALLOW_REFRESH_TOKEN_AUTH"
   ]
 
   supported_identity_providers = ["COGNITO"]
@@ -156,13 +163,10 @@ resource "aws_apigatewayv2_authorizer" "cognito_jwt_authorizer" {
 resource "aws_apigatewayv2_integration" "nlb_integration" {
   api_id           = aws_apigatewayv2_api.http_api.id
   integration_type = "HTTP_PROXY"
-
   integration_method = "ANY"
   integration_uri    = aws_lb_listener.nlb_listener.arn
-
   connection_type = "VPC_LINK"
   connection_id   = aws_apigatewayv2_vpc_link.vpc_link.id
-
   payload_format_version = "1.0"
 
   depends_on = [aws_lb_listener.nlb_listener]
@@ -207,11 +211,6 @@ resource "aws_apigatewayv2_route" "argo_route" {
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.cognito_jwt_authorizer.id
 }
-
-
-
-
-
 
 
 
