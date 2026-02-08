@@ -42,11 +42,8 @@ resource "aws_lb_target_group" "app_tg" {
   port        = var.app_port
   protocol    = "TCP"
   vpc_id      = var.vpc_id
-  target_type = "ip"   # استخدمي "ip" بدل "instance" لو هتسجلي external hostname
+  target_type = "instance"  
 }
-
-# شيل الـ aws_lb_target_group_attachment القديم
-# NLB هيقدر يوصل للtargets من خلال الـ VPC Link + integration بدون attachment يدوي
 
 ##########################
 # Listener

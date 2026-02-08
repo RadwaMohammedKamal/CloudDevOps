@@ -39,3 +39,11 @@ output "nlb_sg_id" {
 output "vpc_link_sg_id" {
   value       = module.api.vpc_link_sg_id
 }
+
+output "nlb_arn" {
+  value = module.api.nlb_arn
+}
+
+output "nlb_tg_arn" {
+  value = module.api.nlb_tg_arn
+}

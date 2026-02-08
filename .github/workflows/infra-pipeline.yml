@@ -72,7 +72,7 @@ jobs:
           terraform output -raw cognito_user_pool_client_id || echo "Not available"
           echo "================================"
           echo "Other Terraform Outputs:"
-          terraform output -json | jq -r 'to_entries[] | "\(.key): \(.value.value)"' | grep -vE 'api_gateway_url|cognito_user_pool_id|cognito_user_pool_client_id'
+          terraform output -json | jq -r 'to_entries[] | "\(.key): \(.value.value // "null")"' | grep -vE 'api_gateway_url|cognito_user_pool_id|cognito_user_pool_client_id' || true
           echo "================================"
 
       - name: Terraform plan destroy
@@ -84,6 +84,7 @@ jobs:
         if: ${{ github.event.inputs.action == 'destroy' }}
         working-directory: ${{ env.TF_DIR }}
         run: terraform apply -auto-approve tfplan
+
 # ///////////////////////////////////////////////////////////////////////
 # name: Terraform Workflow
 

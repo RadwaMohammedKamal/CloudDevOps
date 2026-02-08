@@ -27,3 +27,13 @@ output "api_gateway_url" {
   value       = aws_apigatewayv2_stage.default_stage.invoke_url
   description = "API Gateway base URL"
 }
+
+output "nlb_arn" {
+  value       = aws_lb.app_nlb.arn
+  description = "ARN of the Network Load Balancer"
+}
+
+output "nlb_tg_arn" {
+  value       = aws_lb_target_group.app_tg.arn
+  description = "ARN of the Target Group for NLB"
+}
