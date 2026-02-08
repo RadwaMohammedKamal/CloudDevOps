@@ -27,7 +27,6 @@ jobs:
       - name: Install AWS CLI, kubectl, Helm
         run: |
           set -euo pipefail
-
           # AWS CLI
           if ! command -v aws &> /dev/null; then
             curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
@@ -56,20 +55,14 @@ jobs:
       - name: Setup EKS kubeconfig
         run: |
           set -euo pipefail
-
           CLUSTER_NAME="${ENV}-eks"
           echo "Using cluster: $CLUSTER_NAME"
-
-          aws eks update-kubeconfig \
-            --region $AWS_REGION \
-            --name "$CLUSTER_NAME"
-
+          aws eks update-kubeconfig --region $AWS_REGION --name "$CLUSTER_NAME"
           kubectl get nodes
 
       - name: Add Helm repos
         run: |
           set -euo pipefail
-
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
           helm repo add argo https://argoproj.github.io/argo-helm
           helm repo update
@@ -77,7 +70,6 @@ jobs:
       - name: Install NGINX Ingress Controller
         run: |
           set -euo pipefail
-
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
             --namespace $NAMESPACE \
             --create-namespace \
@@ -85,14 +77,12 @@ jobs:
             --timeout 10m \
             --set controller.publishService.enabled=true \
             --set controller.ingressClassResource.default=true
-
           kubectl get pods -n $NAMESPACE
           kubectl get svc -n $NAMESPACE
 
-      - name: Install Argo CD with /argo path
+      - name: Install Argo CD
         run: |
           set -euo pipefail
-
           helm upgrade --install argocd argo/argo-cd \
             --namespace $NAMESPACE \
             --create-namespace \
@@ -104,19 +94,31 @@ jobs:
             --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"=/\$2 \
             --set server.ingress.paths[0].path="/argo(/|$)(.*)" \
             --set server.ingress.paths[0].pathType=Prefix
-
           kubectl get pods -n $NAMESPACE
           kubectl get ingress -n $NAMESPACE
 
-      - name: Output NGINX Ingress Controller Service
+      - name: Capture IPs for Terraform
+        id: capture_ips
         run: |
           set -euo pipefail
-          echo "=== NGINX Controller Service ==="
-          kubectl get svc ingress-nginx-controller -n $NAMESPACE -o wide
-          kubectl get pods -n $NAMESPACE -o wide
+          # NGINX Service
+          NGINX_CLUSTER_IP=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.spec.clusterIP}')
+          NGINX_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          
+          # ArgoCD Ingress
+          ARGOCD_CLUSTER_IP=$(kubectl get svc argocd-server -n $NAMESPACE -o jsonpath='{.spec.clusterIP}')
 
-      - name: Output Argo CD Ingress
+          echo "NGINX_CLUSTER_IP=$NGINX_CLUSTER_IP"
+          echo "NGINX_EXTERNAL_IP=$NGINX_EXTERNAL_IP"
+          echo "ARGOCD_CLUSTER_IP=$ARGOCD_CLUSTER_IP"
+
+          # Set GitHub Actions outputs
+          echo "nginx_cluster_ip=$NGINX_CLUSTER_IP" >> $GITHUB_OUTPUT
+          echo "nginx_external_ip=$NGINX_EXTERNAL_IP" >> $GITHUB_OUTPUT
+          echo "argocd_cluster_ip=$ARGOCD_CLUSTER_IP" >> $GITHUB_OUTPUT
+
+      - name: Show captured outputs
         run: |
-          set -euo pipefail
-          echo "=== Argo CD Ingress ==="
-          kubectl get ingress argocd-server -n $NAMESPACE -o wide
+          echo "NGINX Cluster IP: ${{ steps.capture_ips.outputs.nginx_cluster_ip }}"
+          echo "NGINX External IP: ${{ steps.capture_ips.outputs.nginx_external_ip }}"
+          echo "ArgoCD Cluster IP: ${{ steps.capture_ips.outputs.argocd_cluster_ip }}"
