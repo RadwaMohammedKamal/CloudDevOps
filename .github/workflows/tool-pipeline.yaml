@@ -56,6 +56,7 @@ jobs:
       - name: Setup EKS kubeconfig
         run: |
           set -euo pipefail
+
           CLUSTER_NAME="${ENV}-eks"
           echo "Using cluster: $CLUSTER_NAME"
 
@@ -68,6 +69,7 @@ jobs:
       - name: Add Helm repos
         run: |
           set -euo pipefail
+
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
           helm repo add argo https://argoproj.github.io/argo-helm
           helm repo update
@@ -87,7 +89,7 @@ jobs:
           kubectl get pods -n $NAMESPACE
           kubectl get svc -n $NAMESPACE
 
-      - name: Install Argo CD with /argo
+      - name: Install Argo CD with /argo path
         run: |
           set -euo pipefail
 
@@ -99,14 +101,14 @@ jobs:
             --set server.service.type=ClusterIP \
             --set server.ingress.enabled=true \
             --set server.ingress.ingressClassName=nginx \
-            --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"=/$2 \
+            --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"=/\$2 \
             --set server.ingress.paths[0].path="/argo(/|$)(.*)" \
             --set server.ingress.paths[0].pathType=Prefix
 
           kubectl get pods -n $NAMESPACE
           kubectl get ingress -n $NAMESPACE
 
-      - name: Output NGINX Ingress Controller Service IPs
+      - name: Output NGINX Ingress Controller Service
         run: |
           set -euo pipefail
           echo "=== NGINX Controller Service ==="
