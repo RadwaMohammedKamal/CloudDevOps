@@ -47,6 +47,12 @@ resource "aws_lb_target_group" "app_tg" {
   target_type = "ip"
 }
 
+# resource "aws_lb_target_group_attachment" "nginx_target_1" {
+#   target_group_arn = aws_lb_target_group.app_tg.arn
+#   target_id        = "10.0.0.123"  # Cluster IP لل ingress-nginx svc
+#   port             = 80
+# }
+
 ##########################
 # Listener
 ##########################
@@ -96,55 +102,55 @@ resource "aws_apigatewayv2_api" "http_api" {
   tags          = var.tags
 }
 
-##########################
-# Cognito User Pool
-##########################
-resource "aws_cognito_user_pool" "user_pool" {
-  name = "${var.environment}-user-pool"
+# ##########################
+# # Cognito User Pool
+# ##########################
+# resource "aws_cognito_user_pool" "user_pool" {
+#   name = "${var.environment}-user-pool"
 
-  auto_verified_attributes = ["email"]
+#   auto_verified_attributes = ["email"]
 
-  password_policy {
-    minimum_length    = 8
-    require_uppercase = true
-    require_lowercase = true
-    require_numbers   = true
-    require_symbols   = false
-  }
-}
+#   password_policy {
+#     minimum_length    = 8
+#     require_uppercase = true
+#     require_lowercase = true
+#     require_numbers   = true
+#     require_symbols   = false
+#   }
+# }
 
 ##########################
 # Cognito Client
-##########################
-resource "aws_cognito_user_pool_client" "user_pool_client" {
-  name         = "${var.environment}-user-pool-client"
-  user_pool_id = aws_cognito_user_pool.user_pool.id
+# ##########################
+# resource "aws_cognito_user_pool_client" "user_pool_client" {
+#   name         = "${var.environment}-user-pool-client"
+#   user_pool_id = aws_cognito_user_pool.user_pool.id
 
-  generate_secret = false
+#   generate_secret = false
 
-  explicit_auth_flows = [
-    "ALLOW_USER_PASSWORD_AUTH",
-    "ALLOW_REFRESH_TOKEN_AUTH",
-    "ALLOW_USER_SRP_AUTH"
-  ]
+#   explicit_auth_flows = [
+#     "ALLOW_USER_PASSWORD_AUTH",
+#     "ALLOW_REFRESH_TOKEN_AUTH",
+#     "ALLOW_USER_SRP_AUTH"
+#   ]
 
-  supported_identity_providers = ["COGNITO"]
-}
+#   supported_identity_providers = ["COGNITO"]
+# }
 
 ##########################
 # JWT Authorizer
-##########################
-resource "aws_apigatewayv2_authorizer" "cognito_jwt_authorizer" {
-  api_id           = aws_apigatewayv2_api.http_api.id
-  name             = "cognito-jwt"
-  authorizer_type  = "JWT"
-  identity_sources = ["$request.header.Authorization"]
+# ##########################
+# resource "aws_apigatewayv2_authorizer" "cognito_jwt_authorizer" {
+#   api_id           = aws_apigatewayv2_api.http_api.id
+#   name             = "cognito-jwt"
+#   authorizer_type  = "JWT"
+#   identity_sources = ["$request.header.Authorization"]
 
-  jwt_configuration {
-    issuer   = "https://cognito-idp.${var.region}.amazonaws.com/${aws_cognito_user_pool.user_pool.id}"
-    audience = [aws_cognito_user_pool_client.user_pool_client.id]
-  }
-}
+#   jwt_configuration {
+#     issuer   = "https://cognito-idp.${var.region}.amazonaws.com/${aws_cognito_user_pool.user_pool.id}"
+#     audience = [aws_cognito_user_pool_client.user_pool_client.id]
+#   }
+# }
 
 ##########################
 # Integration: API Gateway → VPC Link → NLB
@@ -173,14 +179,35 @@ resource "aws_apigatewayv2_stage" "default_stage" {
 
 ##########################
 # Protected Route (JWT)
+# ##########################
+# resource "aws_apigatewayv2_route" "jwt_proxy_route" {
+#   api_id             = aws_apigatewayv2_api.http_api.id
+#   route_key          = "ANY /{proxy+}"
+#   target             = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
+#   authorization_type = "JWT"
+#   authorizer_id      = aws_apigatewayv2_authorizer.cognito_jwt_authorizer.id
+# }
+
 ##########################
-resource "aws_apigatewayv2_route" "jwt_proxy_route" {
-  api_id             = aws_apigatewayv2_api.http_api.id
-  route_key          = "ANY /{proxy+}"
-  target             = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.cognito_jwt_authorizer.id
+# Routes مفتوحة للتجربة
+##########################
+
+# Route app
+resource "aws_apigatewayv2_route" "app_route" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "ANY /app/{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
+  authorization_type = "NONE"  
 }
+
+# Route Argo CD
+resource "aws_apigatewayv2_route" "argo_route" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "ANY /argo/{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
+  authorization_type = "NONE"
+}
+
 
 
 

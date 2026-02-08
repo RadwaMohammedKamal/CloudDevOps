@@ -1,4 +1,4 @@
-name: EKS Setup Workflow
+name: EKS Setup Tool Workflow
 
 on:
   workflow_dispatch:
@@ -18,6 +18,7 @@ jobs:
     env:
       AWS_REGION: eu-north-1
       ENV: ${{ github.event.inputs.env }}
+      NAMESPACE: prod
 
     steps:
       - name: Checkout repository
@@ -55,7 +56,6 @@ jobs:
       - name: Setup EKS kubeconfig
         run: |
           set -euo pipefail
-
           CLUSTER_NAME="${ENV}-eks"
           echo "Using cluster: $CLUSTER_NAME"
 
@@ -77,26 +77,44 @@ jobs:
           set -euo pipefail
 
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-            --namespace ingress-nginx \
+            --namespace $NAMESPACE \
             --create-namespace \
             --wait \
             --timeout 10m \
             --set controller.publishService.enabled=true \
             --set controller.ingressClassResource.default=true
 
-          kubectl get pods -n ingress-nginx
+          kubectl get pods -n $NAMESPACE
+          kubectl get svc -n $NAMESPACE
 
-      - name: Install Argo CD
+      - name: Install Argo CD with /argo
         run: |
           set -euo pipefail
 
           helm upgrade --install argocd argo/argo-cd \
-            --namespace argocd \
+            --namespace $NAMESPACE \
             --create-namespace \
             --wait \
             --timeout 10m \
             --set server.service.type=ClusterIP \
             --set server.ingress.enabled=true \
-            --set server.ingress.ingressClassName=nginx
+            --set server.ingress.ingressClassName=nginx \
+            --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"=/$2 \
+            --set server.ingress.paths[0].path="/argo(/|$)(.*)" \
+            --set server.ingress.paths[0].pathType=Prefix
 
-          kubectl get pods -n argocd
+          kubectl get pods -n $NAMESPACE
+          kubectl get ingress -n $NAMESPACE
+
+      - name: Output NGINX Ingress Controller Service IPs
+        run: |
+          set -euo pipefail
+          echo "=== NGINX Controller Service ==="
+          kubectl get svc ingress-nginx-controller -n $NAMESPACE -o wide
+          kubectl get pods -n $NAMESPACE -o wide
+
+      - name: Output Argo CD Ingress
+        run: |
+          set -euo pipefail
+          echo "=== Argo CD Ingress ==="
+          kubectl get ingress argocd-server -n $NAMESPACE -o wide
