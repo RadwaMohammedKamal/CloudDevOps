@@ -42,7 +42,11 @@ resource "aws_lb_target_group" "app_tg" {
   port        = var.app_port
   protocol    = "TCP"
   vpc_id      = var.vpc_id
-  target_type = "instance"  
+  target_type = "instance"
+
+  lifecycle {
+    prevent_destroy = false
+  }
 }
 
 ##########################
@@ -57,6 +61,8 @@ resource "aws_lb_listener" "nlb_listener" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.app_tg.arn
   }
+
+  depends_on = [aws_lb_target_group.app_tg]
 }
 
 ##########################
@@ -111,7 +117,7 @@ resource "aws_cognito_user_pool" "user_pool" {
   }
 }
 
-#########################
+##########################
 # Cognito Client
 ##########################
 resource "aws_cognito_user_pool_client" "user_pool_client" {
@@ -158,6 +164,8 @@ resource "aws_apigatewayv2_integration" "nlb_integration" {
   connection_id   = aws_apigatewayv2_vpc_link.vpc_link.id
 
   payload_format_version = "1.0"
+
+  depends_on = [aws_lb_listener.nlb_listener]
 }
 
 ##########################
@@ -170,8 +178,10 @@ resource "aws_apigatewayv2_stage" "default_stage" {
 }
 
 ##########################
-# Protected Route (JWT)
+# Routes (JWT protected)
 ##########################
+
+# Proxy route
 resource "aws_apigatewayv2_route" "jwt_proxy_route" {
   api_id             = aws_apigatewayv2_api.http_api.id
   route_key          = "ANY /{proxy+}"
@@ -180,11 +190,7 @@ resource "aws_apigatewayv2_route" "jwt_proxy_route" {
   authorizer_id      = aws_apigatewayv2_authorizer.cognito_jwt_authorizer.id
 }
 
-##########################
-# Routes 
-##########################
-
-# Route app protected
+# App route
 resource "aws_apigatewayv2_route" "app_route" {
   api_id             = aws_apigatewayv2_api.http_api.id
   route_key          = "ANY /app/{proxy+}"
@@ -193,7 +199,7 @@ resource "aws_apigatewayv2_route" "app_route" {
   authorizer_id      = aws_apigatewayv2_authorizer.cognito_jwt_authorizer.id
 }
 
-# Route Argo CD protected
+# Argo CD route
 resource "aws_apigatewayv2_route" "argo_route" {
   api_id             = aws_apigatewayv2_api.http_api.id
   route_key          = "ANY /argo/{proxy+}"
