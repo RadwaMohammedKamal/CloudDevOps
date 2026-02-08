@@ -45,6 +45,11 @@ jobs:
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           helm version
 
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: latest
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -70,13 +75,17 @@ jobs:
       - name: Get Terraform outputs
         id: tf_outputs
         run: |
+          set -euo pipefail
+          echo "Fetching NLB outputs from Terraform..."
           NLB_ARN=$(terraform -chdir=terraform output -raw nlb_arn)
           NLB_TG_ARN=$(terraform -chdir=terraform output -raw nlb_tg_arn)
           echo "NLB_ARN=$NLB_ARN" >> $GITHUB_OUTPUT
           echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
+        shell: bash
 
       - name: Install NGINX Ingress Controller
         run: |
+          set -euo pipefail
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
             --namespace $NAMESPACE \
             --create-namespace \
@@ -92,6 +101,7 @@ jobs:
 
       - name: Install Argo CD
         run: |
+          set -euo pipefail
           helm upgrade --install argocd argo/argo-cd \
             --namespace $NAMESPACE \
             --create-namespace \
@@ -103,6 +113,7 @@ jobs:
             --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"=/\$2 \
             --set server.ingress.paths[0].path="/argo(/|$)(.*)" \
             --set server.ingress.paths[0].pathType=Prefix
+
           kubectl get pods -n $NAMESPACE
           kubectl get ingress -n $NAMESPACE
 
@@ -113,9 +124,11 @@ jobs:
           NGINX_CLUSTER_IP=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.spec.clusterIP}')
           NGINX_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           ARGOCD_CLUSTER_IP=$(kubectl get svc argocd-server -n $NAMESPACE -o jsonpath='{.spec.clusterIP}')
+
           echo "NGINX Cluster IP: $NGINX_CLUSTER_IP"
           echo "NGINX External IP: $NGINX_EXTERNAL_IP"
           echo "ArgoCD Cluster IP: $ARGOCD_CLUSTER_IP"
+
           echo "nginx_cluster_ip=$NGINX_CLUSTER_IP" >> $GITHUB_OUTPUT
           echo "nginx_external_ip=$NGINX_EXTERNAL_IP" >> $GITHUB_OUTPUT
           echo "argocd_cluster_ip=$ARGOCD_CLUSTER_IP" >> $GITHUB_OUTPUT
