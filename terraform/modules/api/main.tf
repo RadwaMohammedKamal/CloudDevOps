@@ -48,11 +48,12 @@ resource "aws_lb_target_group" "app_tg" {
   target_type = "ip"
 }
 
-# resource "aws_lb_target_group_attachment" "nginx_target_1" {
-#   target_group_arn = aws_lb_target_group.app_tg.arn
-#   target_id        = "10.0.0.123"  # Cluster IP لل ingress-nginx svc
-#   port             = 80
-# }
+resource "aws_lb_target_group_attachment" "nginx_target_1" {
+  target_group_arn = aws_lb_target_group.app_tg.arn
+  target_id        = "172.20.112.27"  # Cluster IP لل ingress-nginx svc
+  port             = 80
+}
+
 
 ##########################
 # Listener
