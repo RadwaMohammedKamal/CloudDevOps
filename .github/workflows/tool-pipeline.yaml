@@ -75,8 +75,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "Fetching NLB outputs from Terraform..."
-          NLB_ARN=$(terraform -chdir=terraform output -raw nlb_arn)
-          NLB_TG_ARN=$(terraform -chdir=terraform output -raw nlb_tg_arn)
+          NLB_ARN=$(terraform -chdir=terraform output -json | jq -r '.nlb_arn.value')
+          NLB_TG_ARN=$(terraform -chdir=terraform output -json | jq -r '.nlb_tg_arn.value')
           echo "NLB_ARN=$NLB_ARN" >> $GITHUB_OUTPUT
           echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
 
