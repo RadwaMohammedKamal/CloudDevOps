@@ -48,7 +48,7 @@ jobs:
       - name: Install Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: "latest"
+          terraform_version: latest
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -65,13 +65,6 @@ jobs:
           aws eks update-kubeconfig --region $AWS_REGION --name "$CLUSTER_NAME"
           kubectl get nodes -o wide
 
-      - name: Add Helm repos
-        run: |
-          set -euo pipefail
-          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-          helm repo add argo https://argoproj.github.io/argo-helm
-          helm repo update
-
       - name: Get Terraform outputs
         id: tf_outputs
         run: |
@@ -82,7 +75,14 @@ jobs:
           echo "NLB_ARN=$NLB_ARN" >> $GITHUB_OUTPUT
           echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
 
-      - name: Install NGINX Ingress Controller
+      - name: Add Helm repos
+        run: |
+          set -euo pipefail
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+          helm repo add argo https://argoproj.github.io/argo-helm
+          helm repo update
+
+      - name: Install NGINX Ingress Controller with NLB
         run: |
           set -euo pipefail
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
@@ -94,6 +94,7 @@ jobs:
             --set controller.ingressClassResource.default=true \
             --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
             --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-target-group-arn"="${{ steps.tf_outputs.outputs.NLB_TG_ARN }}"
+
           kubectl get pods -n $NAMESPACE
           kubectl get svc -n $NAMESPACE
 
@@ -111,6 +112,7 @@ jobs:
             --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"=/\$2 \
             --set server.ingress.paths[0].path="/argo(/|$)(.*)" \
             --set server.ingress.paths[0].pathType=Prefix
+
           kubectl get pods -n $NAMESPACE
           kubectl get ingress -n $NAMESPACE
 
@@ -121,9 +123,11 @@ jobs:
           NGINX_CLUSTER_IP=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.spec.clusterIP}')
           NGINX_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           ARGOCD_CLUSTER_IP=$(kubectl get svc argocd-server -n $NAMESPACE -o jsonpath='{.spec.clusterIP}')
+
           echo "NGINX Cluster IP: $NGINX_CLUSTER_IP"
           echo "NGINX External IP: $NGINX_EXTERNAL_IP"
           echo "ArgoCD Cluster IP: $ARGOCD_CLUSTER_IP"
+
           echo "nginx_cluster_ip=$NGINX_CLUSTER_IP" >> $GITHUB_OUTPUT
           echo "nginx_external_ip=$NGINX_EXTERNAL_IP" >> $GITHUB_OUTPUT
           echo "argocd_cluster_ip=$ARGOCD_CLUSTER_IP" >> $GITHUB_OUTPUT
@@ -133,3 +137,5 @@ jobs:
           echo "NGINX Cluster IP: ${{ steps.capture_ips.outputs.nginx_cluster_ip }}"
           echo "NGINX External IP: ${{ steps.capture_ips.outputs.nginx_external_ip }}"
           echo "ArgoCD Cluster IP: ${{ steps.capture_ips.outputs.argocd_cluster_ip }}"
+          echo "NLB ARN: ${{ steps.tf_outputs.outputs.NLB_ARN }}"
+          echo "NLB Target Group ARN: ${{ steps.tf_outputs.outputs.NLB_TG_ARN }}"
