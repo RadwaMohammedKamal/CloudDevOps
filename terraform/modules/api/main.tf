@@ -1,8 +1,3 @@
-
-
-
-
-
 ##########################
 # NLB
 ##########################
@@ -67,8 +62,7 @@ resource "aws_lb_listener" "nlb_listener" {
     target_group_arn = aws_lb_target_group.app_tg.arn
   }
 
-  # Listener يعتمد على Target Group
-  depends_on = [aws_lb_target_group.app_tg]
+  depends_on = [aws_lb_target_group.app_tg] # Listener يعتمد على Target Group
 }
 
 ##########################
@@ -135,8 +129,7 @@ resource "aws_cognito_user_pool_client" "user_pool_client" {
   explicit_auth_flows = [
     "ALLOW_USER_PASSWORD_AUTH",
     "ALLOW_REFRESH_TOKEN_AUTH",
-    "ALLOW_USER_SRP_AUTH",
-    "ALLOW_REFRESH_TOKEN_AUTH"
+    "ALLOW_USER_SRP_AUTH"
   ]
 
   supported_identity_providers = ["COGNITO"]
