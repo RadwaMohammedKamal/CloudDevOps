@@ -1,4 +1,3 @@
-# hybred
 ##########################
 # NLB
 ##########################
@@ -21,8 +20,6 @@ resource "aws_security_group" "nlb_sg" {
   ingress {
     from_port   = 0
     to_port     = 65535
-    # from_port   = var.app_port
-    # to_port     = var.app_port
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]   
   }
@@ -38,22 +35,18 @@ resource "aws_security_group" "nlb_sg" {
 }
 
 ##########################
-# Target Group (TCP)
+# Target Group (TCP) - NLB
 ##########################
 resource "aws_lb_target_group" "app_tg" {
   name        = "${var.environment}-tg"
   port        = var.app_port
   protocol    = "TCP"
   vpc_id      = var.vpc_id
-  target_type = "instance"
+  target_type = "ip"   # استخدمي "ip" بدل "instance" لو هتسجلي external hostname
 }
 
-resource "aws_lb_target_group_attachment" "nginx_target_1" {
-  target_group_arn = aws_lb_target_group.app_tg.arn
-  target_id        = "172.20.112.27"  # Cluster IP لل ingress-nginx svc
-  port             = 80
-}
-
+# شيل الـ aws_lb_target_group_attachment القديم
+# NLB هيقدر يوصل للtargets من خلال الـ VPC Link + integration بدون attachment يدوي
 
 ##########################
 # Listener
@@ -141,7 +134,7 @@ resource "aws_cognito_user_pool_client" "user_pool_client" {
 
 ##########################
 # JWT Authorizer
-# ##########################
+##########################
 resource "aws_apigatewayv2_authorizer" "cognito_jwt_authorizer" {
   api_id           = aws_apigatewayv2_api.http_api.id
   name             = "cognito-jwt"
@@ -181,7 +174,7 @@ resource "aws_apigatewayv2_stage" "default_stage" {
 
 ##########################
 # Protected Route (JWT)
-# ##########################
+##########################
 resource "aws_apigatewayv2_route" "jwt_proxy_route" {
   api_id             = aws_apigatewayv2_api.http_api.id
   route_key          = "ANY /{proxy+}"
@@ -211,6 +204,7 @@ resource "aws_apigatewayv2_route" "argo_route" {
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.cognito_jwt_authorizer.id
 }
+
 
 
 
