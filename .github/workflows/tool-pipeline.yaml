@@ -29,6 +29,7 @@ jobs:
       - name: Install AWS CLI, kubectl, Helm
         run: |
           set -euo pipefail
+          # AWS CLI
           if ! command -v aws &> /dev/null; then
             curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
             unzip -q awscliv2.zip
@@ -36,11 +37,13 @@ jobs:
           fi
           aws --version
 
+          # kubectl
           curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/
           kubectl version --client
 
+          # Helm
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           helm version
 
@@ -63,7 +66,7 @@ jobs:
           aws eks update-kubeconfig --region $AWS_REGION --name "$CLUSTER_NAME"
           kubectl get nodes -o wide
 
-      - name: Terraform init
+      - name: Terraform init (without apply)
         run: |
           set -euo pipefail
           terraform -chdir=${TF_DIR} init
@@ -72,9 +75,10 @@ jobs:
         id: tf_outputs
         run: |
           set -euo pipefail
-          # نجيب القيم الصافية بدون أي debug أو رموز زيادة
-          NLB_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_arn 2>/dev/null | tr -d '\r\n')
-          NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn 2>/dev/null | tr -d '\r\n')
+          # نستخدم raw output ونمسح أي مسافات أو أسطر جديدة
+          export TERRAFORM_WRAPPER=false
+          NLB_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_arn | tr -d '\r\n')
+          NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn | tr -d '\r\n')
 
           echo "NLB_ARN=$NLB_ARN" >> $GITHUB_OUTPUT
           echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
