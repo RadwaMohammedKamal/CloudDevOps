@@ -55,6 +55,8 @@ jobs:
         run: |
           set -euo pipefail
           aws eks update-kubeconfig --region $AWS_REGION --name "${ENV}-eks"
+          echo "Waiting for all nodes to be ready..."
+          kubectl wait --for=condition=Ready nodes --all --timeout=10m
           kubectl get nodes
 
       - name: Terraform init with backend
@@ -69,7 +71,7 @@ jobs:
         id: tf_outputs
         run: |
           set -euo pipefail
-          # fetch outputs, remove newlines and carriage returns
+          # fetch outputs and sanitize
           API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url 2>/dev/null || echo "")
           NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn 2>/dev/null || echo "")
 
@@ -84,6 +86,10 @@ jobs:
             echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
           fi
 
+      - name: Ensure namespace exists
+        run: |
+          kubectl get namespace $NAMESPACE || kubectl create namespace $NAMESPACE
+
       - name: Add Helm repos
         run: |
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
@@ -91,13 +97,12 @@ jobs:
           helm repo update
 
       - name: Install NGINX Ingress (attach to existing NLB TG)
-        if: steps.tf_outputs.outputs.NLB_TG_ARN != ''
+        if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
         run: |
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
             --namespace $NAMESPACE \
-            --create-namespace \
             --wait \
-            --timeout 10m \
+            --timeout 15m \
             --set controller.service.type=LoadBalancer \
             --set controller.service.loadBalancerClass=service.k8s.aws/nlb \
             --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
@@ -111,7 +116,6 @@ jobs:
         run: |
           helm upgrade --install argocd argo/argo-cd \
             --namespace $NAMESPACE \
-            --create-namespace \
             --wait \
             --timeout 10m \
             --set server.service.type=ClusterIP \
@@ -122,18 +126,16 @@ jobs:
             --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"=/\$2
 
       - name: Check NLB Target Group Health
-        if: steps.tf_outputs.outputs.NLB_TG_ARN != ''
+        if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
         run: |
-          set -euo pipefail
           echo "Checking Target Group health..."
           aws elbv2 describe-target-health \
             --target-group-arn "${{ steps.tf_outputs.outputs.NLB_TG_ARN }}" \
             --query 'TargetHealthDescriptions[*].TargetHealth.State'
 
       - name: Curl Argo CD via API Gateway
-        if: steps.tf_outputs.outputs.API_URL != ''
+        if: ${{ steps.tf_outputs.outputs.API_URL != '' }}
         run: |
-          set -euo pipefail
           API_URL="${{ steps.tf_outputs.outputs.API_URL }}"
           echo "Testing Argo CD URL:"
           echo "$API_URL/argo"
