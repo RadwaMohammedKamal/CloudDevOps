@@ -56,7 +56,7 @@ jobs:
           set -euo pipefail
           aws eks update-kubeconfig --region $AWS_REGION --name "${ENV}-eks"
           echo "Waiting for all nodes to be ready..."
-          kubectl wait --for=condition=Ready nodes --all --timeout=15m
+          kubectl wait --for=condition=Ready nodes --all --timeout=20m
           kubectl get nodes
 
       - name: Terraform init with backend
@@ -71,7 +71,6 @@ jobs:
         id: tf_outputs
         run: |
           set -euo pipefail
-          # Clean outputs: remove debug lines, extra colons, newlines
           API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url 2>/dev/null | tr -d '\r\n')
           NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn 2>/dev/null \
                         | grep -E '^arn:aws:elasticloadbalancing:' \
@@ -97,16 +96,22 @@ jobs:
           echo "Checking NLB Target Group..."
           aws elbv2 describe-target-groups --target-group-arns "${{ steps.tf_outputs.outputs.NLB_TG_ARN }}" || { echo "❌ NLB TG not found"; exit 1; }
 
-      - name: Install NGINX Ingress (attach to existing NLB TG) with retry
+      - name: Wait for NLB TG health (optional, 60s)
         if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
         run: |
-          RETRIES=3
+          echo "Waiting 60s for NLB Target Group to stabilize..."
+          sleep 60
+
+      - name: Install NGINX Ingress (attach to existing NLB TG) with retries
+        if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
+        run: |
+          RETRIES=5
           for i in $(seq 1 $RETRIES); do
             echo "Helm install attempt $i..."
             helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
               --namespace $NAMESPACE \
               --wait \
-              --timeout 15m \
+              --timeout 20m \
               --set controller.service.type=LoadBalancer \
               --set controller.service.loadBalancerClass=service.k8s.aws/nlb \
               --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
@@ -115,9 +120,15 @@ jobs:
               --set controller.healthCheckPath="" \
               --set controller.healthCheckPort="traffic-port" \
               --set controller.healthCheckProtocol="TCP" && break
-            echo "❌ Helm install failed, retrying in 30s..."
-            sleep 30
+            echo "❌ Helm install failed, retrying in 60s..."
+            sleep 60
           done
+
+      - name: Check NGINX pods ready
+        run: |
+          echo "Checking NGINX Ingress controller pods..."
+          kubectl -n $NAMESPACE wait --for=condition=Ready pod -l app.kubernetes.io/name=ingress-nginx --timeout=15m
+          kubectl -n $NAMESPACE get pods
 
       - name: Install Argo CD
         run: |
