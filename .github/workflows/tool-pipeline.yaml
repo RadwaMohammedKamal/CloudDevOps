@@ -65,22 +65,23 @@ jobs:
             -backend-config="region=eu-north-1" \
             -backend-config="encrypt=true"
 
-      - name: Get Terraform outputs
+      - name: Get Terraform outputs safely
         id: tf_outputs
         run: |
           set -euo pipefail
-          # Check if outputs exist safely
+          # fetch outputs, remove newlines and carriage returns
           API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url 2>/dev/null || echo "")
           NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn 2>/dev/null || echo "")
-          
-          if [[ -z "$NLB_TG_ARN" ]]; then
-            echo "⚠️ NLB TG ARN not available yet, skipping NGINX attach"
-          else
-            echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
-          fi
+
+          API_URL=$(echo "$API_URL" | tr -d '\r\n')
+          NLB_TG_ARN=$(echo "$NLB_TG_ARN" | tr -d '\r\n')
 
           if [[ -n "$API_URL" ]]; then
             echo "API_URL=$API_URL" >> $GITHUB_OUTPUT
+          fi
+
+          if [[ -n "$NLB_TG_ARN" ]]; then
+            echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
           fi
 
       - name: Add Helm repos
