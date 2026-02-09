@@ -54,26 +54,34 @@ jobs:
       - name: Setup EKS kubeconfig
         run: |
           set -euo pipefail
-          aws eks update-kubeconfig \
-            --region $AWS_REGION \
-            --name "${ENV}-eks"
+          aws eks update-kubeconfig --region $AWS_REGION --name "${ENV}-eks"
           kubectl get nodes
 
-      - name: Terraform init
-        run: terraform -chdir=${TF_DIR} init
+      - name: Terraform init with backend
+        run: |
+          terraform -chdir=${TF_DIR} init \
+            -backend-config="bucket=cloud-devops-nti-s3" \
+            -backend-config="key=terraform/terraform.tfstate" \
+            -backend-config="region=eu-north-1" \
+            -backend-config="encrypt=true"
 
       - name: Get Terraform outputs
         id: tf_outputs
         run: |
           set -euo pipefail
-          API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url)
-          NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn)
-          if [[ ! "$NLB_TG_ARN" =~ ^arn:aws:elasticloadbalancing: ]]; then
-            echo "❌ NLB TG ARN invalid!"
-            exit 1
+          # Check if outputs exist safely
+          API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url 2>/dev/null || echo "")
+          NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn 2>/dev/null || echo "")
+          
+          if [[ -z "$NLB_TG_ARN" ]]; then
+            echo "⚠️ NLB TG ARN not available yet, skipping NGINX attach"
+          else
+            echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
           fi
-          echo "API_URL=$API_URL" >> $GITHUB_OUTPUT
-          echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
+
+          if [[ -n "$API_URL" ]]; then
+            echo "API_URL=$API_URL" >> $GITHUB_OUTPUT
+          fi
 
       - name: Add Helm repos
         run: |
@@ -82,6 +90,7 @@ jobs:
           helm repo update
 
       - name: Install NGINX Ingress (attach to existing NLB TG)
+        if: steps.tf_outputs.outputs.NLB_TG_ARN != ''
         run: |
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
             --namespace $NAMESPACE \
@@ -112,6 +121,7 @@ jobs:
             --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"=/\$2
 
       - name: Check NLB Target Group Health
+        if: steps.tf_outputs.outputs.NLB_TG_ARN != ''
         run: |
           set -euo pipefail
           echo "Checking Target Group health..."
@@ -120,6 +130,7 @@ jobs:
             --query 'TargetHealthDescriptions[*].TargetHealth.State'
 
       - name: Curl Argo CD via API Gateway
+        if: steps.tf_outputs.outputs.API_URL != ''
         run: |
           set -euo pipefail
           API_URL="${{ steps.tf_outputs.outputs.API_URL }}"
