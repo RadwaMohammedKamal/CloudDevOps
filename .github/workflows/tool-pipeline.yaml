@@ -96,11 +96,34 @@ jobs:
           echo "Checking NLB Target Group..."
           aws elbv2 describe-target-groups --target-group-arns "${{ steps.tf_outputs.outputs.NLB_TG_ARN }}" || { echo "❌ NLB TG not found"; exit 1; }
 
-      - name: Wait for NLB TG health (optional, 60s)
+      - name: Wait for NLB TG health (optional, 120s)
         if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
         run: |
-          echo "Waiting 60s for NLB Target Group to stabilize..."
-          sleep 60
+          echo "Waiting 120s for NLB Target Group to stabilize..."
+          sleep 120
+
+      - name: Ensure all nodes ready and registered to NLB
+        run: |
+          echo "Checking nodes are ready and NLB targets registered..."
+          for i in $(seq 1 10); do
+            READY=$(kubectl get nodes --no-headers | grep -c "Ready")
+            TOTAL=$(kubectl get nodes --no-headers | wc -l)
+            if [ "$READY" -eq "$TOTAL" ]; then
+              echo "✅ All nodes are Ready"
+              break
+            fi
+            echo "Nodes not ready yet, waiting 30s..."
+            sleep 30
+          done
+          aws elbv2 describe-target-health --target-group-arn "${{ steps.tf_outputs.outputs.NLB_TG_ARN }}"
+
+      - name: Cleanup stuck Helm release (if any)
+        if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
+        run: |
+          if helm status ingress-nginx -n $NAMESPACE 2>/dev/null | grep -q "pending"; then
+            echo "Release stuck, uninstalling..."
+            helm uninstall ingress-nginx -n $NAMESPACE || true
+          fi
 
       - name: Install NGINX Ingress (attach to existing NLB TG) with retries
         if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
@@ -127,7 +150,7 @@ jobs:
       - name: Check NGINX pods ready
         run: |
           echo "Checking NGINX Ingress controller pods..."
-          kubectl -n $NAMESPACE wait --for=condition=Ready pod -l app.kubernetes.io/name=ingress-nginx --timeout=15m
+          kubectl -n $NAMESPACE wait --for=condition=Ready pod -l app.kubernetes.io/name=ingress-nginx --timeout=20m
           kubectl -n $NAMESPACE get pods
 
       - name: Install Argo CD
