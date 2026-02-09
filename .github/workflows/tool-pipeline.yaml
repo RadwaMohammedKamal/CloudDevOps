@@ -72,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url 2>/dev/null | tr -d '\r\n')
-          NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn 2>/dev/null | grep -E '^arn:aws:elasticloadbalancing:' || echo "")
+          NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn 2>/dev/null | grep -E '^arn:aws:elasticloadbalancing:' | tr -d '\r\n' || echo "")
 
           if [[ -n "$API_URL" ]]; then
             echo "API_URL=$API_URL" >> $GITHUB_OUTPUT
