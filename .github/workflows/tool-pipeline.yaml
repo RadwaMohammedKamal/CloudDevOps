@@ -56,7 +56,7 @@ jobs:
           set -euo pipefail
           aws eks update-kubeconfig --region $AWS_REGION --name "${ENV}-eks"
           echo "Waiting for all nodes to be ready..."
-          kubectl wait --for=condition=Ready nodes --all --timeout=10m
+          kubectl wait --for=condition=Ready nodes --all --timeout=15m
           kubectl get nodes
 
       - name: Terraform init with backend
@@ -71,7 +71,6 @@ jobs:
         id: tf_outputs
         run: |
           set -euo pipefail
-          # fetch outputs and sanitize
           API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url 2>/dev/null || echo "")
           NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn 2>/dev/null || echo "")
 
@@ -96,12 +95,25 @@ jobs:
           helm repo add argo https://argoproj.github.io/argo-helm
           helm repo update
 
+      - name: Pre-check NLB TG and EKS nodes
+        if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
+        run: |
+          set -euo pipefail
+          echo "Checking Target Group ARN..."
+          aws elbv2 describe-target-groups --target-group-arns "${{ steps.tf_outputs.outputs.NLB_TG_ARN }}" || { echo "❌ NLB TG not found"; exit 1; }
+
+          echo "Checking EKS nodes are ready..."
+          kubectl wait --for=condition=Ready nodes --all --timeout=15m || { echo "❌ Nodes not ready"; exit 1; }
+          kubectl get nodes
+
       - name: Install NGINX Ingress (attach to existing NLB TG)
         if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
         run: |
+          set -euo pipefail
+          echo "Installing NGINX Ingress..."
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
             --namespace $NAMESPACE \
-            --wait \
+            --create-namespace \
             --timeout 15m \
             --set controller.service.type=LoadBalancer \
             --set controller.service.loadBalancerClass=service.k8s.aws/nlb \
@@ -110,7 +122,15 @@ jobs:
             --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-target-group-arn"="${{ steps.tf_outputs.outputs.NLB_TG_ARN }}" \
             --set controller.healthCheckPath="" \
             --set controller.healthCheckPort="traffic-port" \
-            --set controller.healthCheckProtocol="TCP"
+            --set controller.healthCheckProtocol="TCP" \
+            --wait || echo "⚠️ Helm install timed out, continuing to post-check"
+
+      - name: Verify NGINX Ingress pods
+        if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
+        run: |
+          echo "Checking NGINX Ingress pods status..."
+          kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx
+          kubectl rollout status deployment ingress-nginx-controller -n $NAMESPACE --timeout=10m
 
       - name: Install Argo CD
         run: |
@@ -124,6 +144,11 @@ jobs:
             --set server.ingress.paths[0].path="/argo(/|$)(.*)" \
             --set server.ingress.paths[0].pathType=Prefix \
             --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"=/\$2
+
+      - name: Verify ArgoCD pods
+        run: |
+          kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=argocd-server
+          kubectl rollout status deployment argocd-server -n $NAMESPACE --timeout=10m
 
       - name: Check NLB Target Group Health
         if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
