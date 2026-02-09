@@ -71,16 +71,15 @@ jobs:
         id: tf_outputs
         run: |
           set -euo pipefail
+          # Clean outputs: remove debug lines, extra colons, newlines
           API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url 2>/dev/null | tr -d '\r\n')
-          NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn 2>/dev/null | grep -E '^arn:aws:elasticloadbalancing:' | tr -d '\r\n' || echo "")
+          NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn 2>/dev/null \
+                        | grep -E '^arn:aws:elasticloadbalancing:' \
+                        | sed 's/::debug.*$//' \
+                        | tr -d '\r\n')
 
-          if [[ -n "$API_URL" ]]; then
-            echo "API_URL=$API_URL" >> $GITHUB_OUTPUT
-          fi
-
-          if [[ -n "$NLB_TG_ARN" ]]; then
-            echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
-          fi
+          echo "API_URL=$API_URL" >> $GITHUB_OUTPUT
+          echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
 
       - name: Ensure namespace exists
         run: |
@@ -98,21 +97,27 @@ jobs:
           echo "Checking NLB Target Group..."
           aws elbv2 describe-target-groups --target-group-arns "${{ steps.tf_outputs.outputs.NLB_TG_ARN }}" || { echo "❌ NLB TG not found"; exit 1; }
 
-      - name: Install NGINX Ingress (attach to existing NLB TG)
+      - name: Install NGINX Ingress (attach to existing NLB TG) with retry
         if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
         run: |
-          helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-            --namespace $NAMESPACE \
-            --wait \
-            --timeout 15m \
-            --set controller.service.type=LoadBalancer \
-            --set controller.service.loadBalancerClass=service.k8s.aws/nlb \
-            --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
-            --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
-            --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-target-group-arn"="${{ steps.tf_outputs.outputs.NLB_TG_ARN }}" \
-            --set controller.healthCheckPath="" \
-            --set controller.healthCheckPort="traffic-port" \
-            --set controller.healthCheckProtocol="TCP"
+          RETRIES=3
+          for i in $(seq 1 $RETRIES); do
+            echo "Helm install attempt $i..."
+            helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+              --namespace $NAMESPACE \
+              --wait \
+              --timeout 15m \
+              --set controller.service.type=LoadBalancer \
+              --set controller.service.loadBalancerClass=service.k8s.aws/nlb \
+              --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
+              --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
+              --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-target-group-arn"="${{ steps.tf_outputs.outputs.NLB_TG_ARN }}" \
+              --set controller.healthCheckPath="" \
+              --set controller.healthCheckPort="traffic-port" \
+              --set controller.healthCheckProtocol="TCP" && break
+            echo "❌ Helm install failed, retrying in 30s..."
+            sleep 30
+          done
 
       - name: Install Argo CD
         run: |
