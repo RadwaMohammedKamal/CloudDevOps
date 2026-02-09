@@ -18,8 +18,8 @@ resource "aws_security_group" "nlb_sg" {
   vpc_id = var.vpc_id
 
   ingress {
-    from_port   = 0
-    to_port     = 65535
+    from_port   = 80
+    to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -35,34 +35,32 @@ resource "aws_security_group" "nlb_sg" {
 }
 
 ##########################
-# Target Group (HTTP)
+# Target Group (TCP)
 ##########################
 resource "aws_lb_target_group" "app_tg" {
   name        = "${var.environment}-tg"
   port        = 80
-  protocol    = "HTTP"
+  protocol    = "TCP"
   vpc_id      = var.vpc_id
   target_type = "ip"
 
   health_check {
-    protocol            = "HTTP"
-    path                = "/healthz"
+    protocol            = "TCP"
     port                = "traffic-port"
     healthy_threshold   = 3
     unhealthy_threshold = 3
     timeout             = 5
     interval            = 10
-    matcher             = "200-399"
   }
 }
 
 ##########################
-# Listener
+# Listener (TCP)
 ##########################
 resource "aws_lb_listener" "nlb_listener" {
   load_balancer_arn = aws_lb.app_nlb.arn
   port              = 80
-  protocol          = "HTTP"
+  protocol          = "TCP"
 
   default_action {
     type             = "forward"
@@ -147,6 +145,7 @@ resource "aws_apigatewayv2_route" "argo_route" {
   route_key = "ANY /argo/{proxy+}"
   target    = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
 }
+
 
 
 

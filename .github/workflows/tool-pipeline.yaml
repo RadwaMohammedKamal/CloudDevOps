@@ -93,7 +93,9 @@ jobs:
             --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
             --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
             --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-target-group-arn"="${{ steps.tf_outputs.outputs.NLB_TG_ARN }}" \
-            --set controller.healthCheckPath="/healthz"
+            --set controller.healthCheckPath="" \
+            --set controller.healthCheckPort="traffic-port" \
+            --set controller.healthCheckProtocol="TCP"
 
       - name: Install Argo CD
         run: |
