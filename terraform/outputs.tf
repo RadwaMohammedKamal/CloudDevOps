@@ -1,21 +1,13 @@
 output "vpc_id" { value = module.vpc.vpc_id }
 output "public_subnets" { value = module.vpc.public_subnet_ids }
 output "private_subnets" { value = module.vpc.private_subnet_ids }
-
 output "eks_cluster_name" { value = module.eks.cluster_name }
 output "eks_cluster_endpoint" { value = module.eks.cluster_endpoint }
 output "eks_cluster_arn" { value = module.eks.cluster_arn }
 output "eks_nodes_sg_id" { value = module.vpc.eks_nodes_sg_id }
-
 output "eks_cluster_role_arn" { value = module.iam.eks_cluster_role_arn }
 output "eks_node_group_role_arn" { value = module.iam.eks_node_group_role_arn }
 output "eks_fargate_pod_role_arn" { value = module.iam.eks_fargate_pod_role_arn }
-
-# Placeholder لو عايزة بس، أو comment عليه
-# output "nlb_sg_id" {
-#   value       = ""
-#   description = "Security Group ID of the NLB (empty if not created yet)"
-# }
 output "vpc_link_id" {
   value = module.api.vpc_link_id
 }

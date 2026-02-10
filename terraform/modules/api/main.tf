@@ -38,11 +38,11 @@ resource "aws_apigatewayv2_api" "http_api" {
 # integration_uri = NLB LISTENER ARN
 # ----------------------------
 resource "aws_apigatewayv2_integration" "nlb_integration" {
+  count                  = length(var.integration_uri) > 0 ? 1 : 0
   api_id                 = aws_apigatewayv2_api.http_api.id
   integration_type       = "HTTP_PROXY"
   integration_method     = "ANY"
-  integration_uri        = var.nlb_listener_arn
-
+  integration_uri        = var.integration_uri
   connection_type        = "VPC_LINK"
   connection_id          = aws_apigatewayv2_vpc_link.vpc_link.id
   payload_format_version = "1.0"
@@ -52,9 +52,10 @@ resource "aws_apigatewayv2_integration" "nlb_integration" {
 # Route /app
 # ----------------------------
 resource "aws_apigatewayv2_route" "app_route" {
+  count     = length(var.integration_uri) > 0 ? 1 : 0
   api_id    = aws_apigatewayv2_api.http_api.id
   route_key = "ANY /app/{proxy+}"
-  target    = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
+  target    = "integrations/${aws_apigatewayv2_integration.nlb_integration[0].id}"
 }
 
 # ----------------------------

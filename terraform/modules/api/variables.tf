@@ -5,11 +5,16 @@ variable "environment" { type = string }
 variable "vpc_id" { type = string }
 variable "private_subnets" { type = list(string) }
 variable "tags" { type = map(string) }
-
-variable "nlb_listener_arn" {
-  description = "NLB Listener ARN for application"
+variable "integration_uri" {
+  description = "URI for API integration (NLB DNS)"
   type        = string
+  default     = ""
 }
+
+# variable "nlb_listener_arn" {
+#   description = "NLB Listener ARN for application"
+#   type        = string
+# }
 
 # variable "environment" { type = string }
 # variable "vpc_id" { type = string }
