@@ -23,15 +23,9 @@ jobs:
       APP_PORT: 80
 
     steps:
-    # ----------------------------
-    # Checkout repo
-    # ----------------------------
     - name: Checkout repo
       uses: actions/checkout@v3
 
-    # ----------------------------
-    # Install AWS CLI, kubectl, Helm
-    # ----------------------------
     - name: Install tools
       run: |
         set -e
@@ -45,14 +39,8 @@ jobs:
         curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
         helm version
 
-    # ----------------------------
-    # Setup Terraform
-    # ----------------------------
     - uses: hashicorp/setup-terraform@v2
 
-    # ----------------------------
-    # Configure AWS credentials
-    # ----------------------------
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -60,45 +48,27 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    # ----------------------------
-    # Terraform Init
-    # ----------------------------
     - name: Terraform Init
       run: terraform -chdir=${TF_DIR} init -input=false
 
-    # ----------------------------
-    # Terraform Plan (Optional check)
-    # ----------------------------
     - name: Terraform Plan
-      run: terraform -chdir=${TF_DIR} plan -var-file=${TF_DIR}/${ENV}.tfvars
+      run: terraform -chdir=${TF_DIR} plan -var-file=${ENV}.tfvars
 
-    # ----------------------------
-    # Setup kubeconfig
-    # ----------------------------
     - name: Setup kubeconfig
       run: |
         aws eks update-kubeconfig --region $AWS_REGION --name "${ENV}-eks"
         kubectl wait --for=condition=Ready nodes --all --timeout=20m
 
-    # ----------------------------
-    # Ensure namespace
-    # ----------------------------
     - name: Ensure namespace
       run: |
         kubectl get ns $NAMESPACE || kubectl create ns $NAMESPACE
 
-    # ----------------------------
-    # Add Helm repos
-    # ----------------------------
     - name: Add Helm repos
       run: |
         helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
         helm repo add argo https://argoproj.github.io/argo-helm
         helm repo update
 
-    # ----------------------------
-    # Install ingress-nginx (creates NLB)
-    # ----------------------------
     - name: Install ingress-nginx
       run: |
         helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
@@ -110,16 +80,12 @@ jobs:
           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
           --set controller.service.targetPorts.http=${APP_PORT}
 
-    # ----------------------------
-    # Get NLB DNS with retry
-    # ----------------------------
     - name: Get NLB DNS
       id: nlb
       run: |
         echo "Waiting for NLB DNS..."
         for i in {1..20}; do
-          DNS=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE \
-            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          DNS=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           if [ -n "$DNS" ]; then
             echo "nlb_dns=$DNS" >> $GITHUB_OUTPUT
             echo "✅ Found NLB DNS: $DNS"
@@ -131,9 +97,6 @@ jobs:
         echo "❌ NLB DNS not found after retries"
         exit 1
 
-    # ----------------------------
-    # Pre-check: Validate VPC Link & Security Groups
-    # ----------------------------
     - name: Pre-check API VPC Link & Security Group
       run: |
         echo "Validating VPC Link and SGs..."
@@ -151,29 +114,20 @@ jobs:
         fi
         echo "✅ VPC Link SG exists: $SG_ID"
 
-    # ----------------------------
-    # Terraform Apply API integration
-    # ----------------------------
     - name: Terraform Apply API integration
       run: |
         set -e
         terraform -chdir=${TF_DIR} apply -auto-approve \
-          -var-file=${TF_DIR}/${ENV}.tfvars \
+          -var-file=${ENV}.tfvars \
           -var="integration_uri=http://${{ steps.nlb.outputs.nlb_dns }}" \
           -var="app_port=${APP_PORT}"
 
-    # ----------------------------
-    # Get API Gateway URL
-    # ----------------------------
     - name: Get API Gateway URL
       id: api
       run: |
         API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url)
         echo "api_url=$API_URL" >> $GITHUB_OUTPUT
 
-    # ----------------------------
-    # Check API Gateway reachable
-    # ----------------------------
     - name: Check API Gateway reachable
       run: |
         for i in {1..10}; do
@@ -188,9 +142,6 @@ jobs:
         echo "❌ API Gateway not reachable after retries"
         exit 1
 
-    # ----------------------------
-    # Install Argo CD
-    # ----------------------------
     - name: Install Argo CD
       run: |
         helm upgrade --install argocd argo/argo-cd \
@@ -204,9 +155,6 @@ jobs:
           --set server.ingress.paths[0].pathType=Prefix \
           --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"="/\$2"
 
-    # ----------------------------
-    # Check Argo CD reachable
-    # ----------------------------
     - name: Check Argo CD reachable
       run: |
         for i in {1..10}; do
@@ -217,9 +165,6 @@ jobs:
         echo "❌ Argo CD not reachable after retries"
         exit 1
 
-    # ----------------------------
-    # Final output
-    # ----------------------------
     - name: Show URLs
       run: |
         echo "=============================="
