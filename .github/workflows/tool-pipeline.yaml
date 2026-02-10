@@ -110,25 +110,29 @@ jobs:
             --set controller.service.targetPorts.http=${APP_PORT}
 
       # ----------------------------
-      # Get NLB Listener ARN
+      # Get NLB Listener ARN from Service
       # ----------------------------
       - name: Get NLB Listener ARN
         id: listener
         run: |
-          echo "Getting NLB ARN..."
-          NLB_ARN=$(aws elbv2 describe-load-balancers \
-            --names ingress-nginx-controller \
-            --query 'LoadBalancers[0].LoadBalancerArn' \
-            --output text)
-          echo "NLB_ARN=$NLB_ARN"
+          echo "Getting NLB DNS from Service..."
+          NLB_DNS=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          if [ -z "$NLB_DNS" ]; then
+            echo "❌ NLB DNS not found"
+            exit 1
+          fi
+          echo "✅ NLB DNS: $NLB_DNS"
 
-          echo "Getting Listener ARN..."
-          LISTENER_ARN=$(aws elbv2 describe-listeners \
-            --load-balancer-arn $NLB_ARN \
-            --query 'Listeners[0].ListenerArn' \
+          echo "Getting NLB ARN from AWS..."
+          NLB_ARN=$(aws elbv2 describe-load-balancers \
+            --query "LoadBalancers[?DNSName=='$NLB_DNS'].LoadBalancerArn | [0]" \
             --output text)
-          echo "listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
-          echo "✅ Listener ARN: $LISTENER_ARN"
+          if [ -z "$NLB_ARN" ]; then
+            echo "❌ NLB ARN not found"
+            exit 1
+          fi
+          echo "listener_arn=$NLB_ARN" >> $GITHUB_OUTPUT
+          echo "✅ Listener ARN: $NLB_ARN"
 
       # ----------------------------
       # Terraform Apply API integration (APP ONLY)
