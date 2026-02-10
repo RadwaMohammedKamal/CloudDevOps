@@ -164,7 +164,7 @@ jobs:
     - name: Get API Gateway URL
       id: api
       run: |
-        API_URL=$(terraform -chdir=${TF_DIR} output -json api_gateway_url 2>/dev/null | jq -r '. | select(.!=null) | tostring' | xargs)
+        API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url 2>/dev/null | tr -d '\r\n' | xargs)
         echo "DEBUG: API_URL='$API_URL'"
         if [ -z "$API_URL" ]; then
           echo "❌ API Gateway URL not found!"
@@ -231,6 +231,7 @@ jobs:
         echo "API Gateway URL: ${{ steps.api.outputs.api_url }}"
         echo "Argo CD URL: ${{ steps.api.outputs.api_url }}/argo"
         echo "=============================="
+
 
 
 # name: EKS Full Deployment Pipeline
