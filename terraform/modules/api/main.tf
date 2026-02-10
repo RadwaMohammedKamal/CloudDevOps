@@ -1,4 +1,6 @@
+# ----------------------------
 # Security Group for VPC Link
+# ----------------------------
 resource "aws_security_group" "vpc_link_sg" {
   name   = "${var.environment}-vpc-link-sg"
   vpc_id = var.vpc_id
@@ -13,21 +15,27 @@ resource "aws_security_group" "vpc_link_sg" {
   tags = var.tags
 }
 
+# ----------------------------
 # VPC Link
+# ----------------------------
 resource "aws_apigatewayv2_vpc_link" "vpc_link" {
   name               = "${var.environment}-vpc-link"
   subnet_ids         = var.private_subnets
   security_group_ids = [aws_security_group.vpc_link_sg.id]
 }
 
+# ----------------------------
 # API Gateway
+# ----------------------------
 resource "aws_apigatewayv2_api" "http_api" {
   name          = "${var.environment}-http-api"
   protocol_type = "HTTP"
   tags          = var.tags
 }
 
-# Integration (يتعمل لاحقًا)
+# ----------------------------
+# NLB Integration app
+# ----------------------------
 resource "aws_apigatewayv2_integration" "nlb_integration" {
   count = var.integration_uri == "" ? 0 : 1
 
@@ -41,7 +49,9 @@ resource "aws_apigatewayv2_integration" "nlb_integration" {
   payload_format_version = "1.0"
 }
 
-# Routes
+# ----------------------------
+# Route app
+# ----------------------------
 resource "aws_apigatewayv2_route" "proxy_route" {
   count = var.integration_uri == "" ? 0 : 1
 
@@ -50,13 +60,36 @@ resource "aws_apigatewayv2_route" "proxy_route" {
   target    = "integrations/${aws_apigatewayv2_integration.nlb_integration[0].id}"
 }
 
+# ----------------------------
+# Argo CD Integration
+# ----------------------------
+resource "aws_apigatewayv2_integration" "argocd_integration" {
+  api_id                 = aws_apigatewayv2_api.http_api.id
+  integration_type       = "HTTP_PROXY"
+  integration_method     = "ANY"
+  integration_uri        = "https://${var.argocd_ingress_dns}/argo"
+  connection_type        = "VPC_LINK"
+  connection_id          = aws_apigatewayv2_vpc_link.vpc_link.id
+  payload_format_version = "1.0"
+}
+
+# ----------------------------
+# Route لـ Argo CD
+# ----------------------------
+resource "aws_apigatewayv2_route" "argocd_route" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "ANY /argo/{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.argocd_integration.id}"
+}
+
+# ----------------------------
 # Stage
+# ----------------------------
 resource "aws_apigatewayv2_stage" "default_stage" {
   api_id      = aws_apigatewayv2_api.http_api.id
   name        = "$default"
   auto_deploy = true
 }
-
 
 
 

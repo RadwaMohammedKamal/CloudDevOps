@@ -49,13 +49,15 @@ module "irsa" {
 }
 
 module "api" {
-  source          = "./modules/api"
-  environment     = var.environment
-  vpc_id          = module.vpc.vpc_id
-  private_subnets = module.vpc.private_subnet_ids
-  tags            = var.tags
-  integration_uri = ""  
+  source             = "./modules/api"
+  environment        = var.environment
+  vpc_id             = module.vpc.vpc_id
+  private_subnets    = module.vpc.private_subnet_ids
+  tags               = var.tags
+  integration_uri    = ""  
+  argocd_ingress_dns = "<PLACEHOLDER_ARGO_INGRESS>"  
 }
+
 
 # Security Group Rule to allow traffic from API VPC Link SG to EKS nodes
 resource "aws_security_group_rule" "allow_vpc_link_to_nodes" {

@@ -9,6 +9,11 @@ variable "integration_uri" {
   default     = ""
 }
 
+variable "argocd_ingress_dns" {
+  description = "DNS of the Argo CD ingress"
+  type        = string
+}
+
 
 # variable "environment" { type = string }
 # variable "vpc_id" { type = string }

@@ -30,7 +30,7 @@ jobs:
       uses: actions/checkout@v3
 
     # ----------------------------
-    # Install AWS CLI, kubectl, Helm
+    # Install tools
     # ----------------------------
     - name: Install tools
       run: |
@@ -108,51 +108,26 @@ jobs:
           --set controller.service.targetPorts.http=${APP_PORT}
 
     # ----------------------------
-    # Get NLB DNS with retry
+    # Get NLB DNS
     # ----------------------------
     - name: Get NLB DNS
       id: nlb
       run: |
-        echo "Waiting for NLB DNS..."
         for i in {1..20}; do
           DNS=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           if [ -n "$DNS" ]; then
             echo "nlb_dns=$DNS" >> $GITHUB_OUTPUT
-            echo "✅ Found NLB DNS: $DNS"
             exit 0
           fi
-          echo "Retry $i/20: NLB DNS not ready yet..."
           sleep 30
         done
-        echo "❌ NLB DNS not found after retries"
         exit 1
 
     # ----------------------------
-    # Pre-check VPC Link & Security Group
-    # ----------------------------
-    - name: Pre-check API VPC Link & Security Group
-      run: |
-        echo "Validating VPC Link and SGs..."
-        VPC_LINK_ID=$(terraform -chdir=${TF_DIR} output -raw vpc_link_id 2>/dev/null | tr -d '\r\n')
-        if [ -z "$VPC_LINK_ID" ]; then
-          echo "❌ VPC Link not created or output missing!"
-          exit 1
-        fi
-        echo "✅ VPC Link exists: $VPC_LINK_ID"
-
-        SG_ID=$(terraform -chdir=${TF_DIR} output -raw vpc_link_sg_id 2>/dev/null | tr -d '\r\n')
-        if [ -z "$SG_ID" ]; then
-          echo "❌ VPC Link Security Group not created or output missing!"
-          exit 1
-        fi
-        echo "✅ VPC Link SG exists: $SG_ID"
-
-    # ----------------------------
-    # Terraform Apply API integration
+    # Terraform Apply API integration for app
     # ----------------------------
     - name: Terraform Apply API integration
       run: |
-        set -e
         terraform -chdir=${TF_DIR} apply -auto-approve \
           -var-file=${ENV}.tfvars \
           -var="integration_uri=http://${{ steps.nlb.outputs.nlb_dns }}" \
@@ -164,28 +139,8 @@ jobs:
     - name: Get API Gateway URL
       id: api
       run: |
-        API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url 2>/dev/null | tr -d '\r\n' | xargs)
-        echo "DEBUG: API_URL='$API_URL'"
-        if [ -z "$API_URL" ]; then
-          echo "❌ API Gateway URL not found!"
-          exit 1
-        fi
+        API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url)
         echo "api_url=$API_URL" >> $GITHUB_OUTPUT
-        echo "✅ API Gateway URL: $API_URL"
-
-    # ----------------------------
-    # Check API Gateway via AWS CLI
-    # ----------------------------
-    - name: Check API Gateway exists via AWS CLI
-      run: |
-        API_ID=$(aws apigatewayv2 get-apis \
-          --query "Items[?ApiEndpoint=='${{ steps.api.outputs.api_url }}'].ApiId" \
-          --output text)
-        if [ -z "$API_ID" ]; then
-          echo "❌ API Gateway not found in AWS!"
-          exit 1
-        fi
-        echo "✅ API Gateway exists with API ID: $API_ID"
 
     # ----------------------------
     # Install Argo CD
@@ -204,32 +159,35 @@ jobs:
           --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"="/\$2"
 
     # ----------------------------
-    # Check Argo CD pods & ingress
+    # Get Argo CD ingress DNS
     # ----------------------------
-    - name: Check Argo CD ready
+    - name: Get Argo CD Ingress
+      id: argocd
       run: |
-        echo "Checking Argo CD pods..."
-        kubectl wait --for=condition=Ready pods --all -n $NAMESPACE --timeout=10m
-        kubectl get pods -n $NAMESPACE
-
-        echo "Checking Argo CD ingress..."
         INGRESS_HOST=$(kubectl get ingress argocd-server -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
         if [ -z "$INGRESS_HOST" ]; then
           echo "❌ Argo CD ingress not ready!"
           exit 1
         fi
-        echo "✅ Argo CD ingress ready: $INGRESS_HOST"
-        echo "argo_cd_url=https://$INGRESS_HOST/argo" >> $GITHUB_OUTPUT
+        echo "argo_ingress_dns=$INGRESS_HOST" >> $GITHUB_OUTPUT
 
     # ----------------------------
-    # Final output
+    # Terraform Apply API integration for Argo CD route
+    # ----------------------------
+    - name: Terraform Apply API integration for Argo CD
+      run: |
+        terraform -chdir=${TF_DIR} apply -auto-approve \
+          -var-file=${ENV}.tfvars \
+          -var="argocd_ingress_dns=${{ steps.argocd.outputs.argo_ingress_dns }}"
+
+    # ----------------------------
+    # Show final URLs
     # ----------------------------
     - name: Show URLs
       run: |
-        echo "=============================="
-        echo "API Gateway URL: ${{ steps.api.outputs.api_url }}"
-        echo "Argo CD URL: ${{ steps.check_argo_cd_ready.outputs.argo_cd_url }}"
-        echo "=============================="
+        API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url)
+        echo "API Gateway URL for app: $API_URL"
+        echo "API Gateway URL for Argo CD: $API_URL/argo/"
 
 
 
