@@ -1,19 +1,15 @@
+# ----------------------------
+# Variables
+# ----------------------------
 variable "environment" { type = string }
 variable "vpc_id" { type = string }
 variable "private_subnets" { type = list(string) }
 variable "tags" { type = map(string) }
 
-variable "integration_uri" {
-  description = "URI for API integration (NLB DNS)"
-  type        = string
-  default     = ""
-}
-
-variable "argocd_ingress_dns" {
-  description = "DNS of the Argo CD ingress"
+variable "nlb_listener_arn" {
+  description = "NLB Listener ARN for application"
   type        = string
 }
-
 
 # variable "environment" { type = string }
 # variable "vpc_id" { type = string }

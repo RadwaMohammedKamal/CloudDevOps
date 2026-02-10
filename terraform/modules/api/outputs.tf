@@ -1,17 +1,18 @@
+# ----------------------------
+# Outputs
+# ----------------------------
 output "api_gateway_url" {
-  value       = aws_apigatewayv2_stage.default_stage.invoke_url
-  description = "API Gateway base URL"
+  value = aws_apigatewayv2_stage.default_stage.invoke_url
 }
 
 output "vpc_link_sg_id" {
-  value       = aws_security_group.vpc_link_sg.id
-  description = "Security Group ID of the VPC Link for API Gateway"
+  value = aws_security_group.vpc_link_sg.id
 }
 
 output "vpc_link_id" {
-  value       = aws_apigatewayv2_vpc_link.vpc_link.id
-  description = "VPC Link ID for API integration"
+  value = aws_apigatewayv2_vpc_link.vpc_link.id
 }
+
 
 # 2
 # output "api_gateway_url" {

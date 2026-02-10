@@ -39,9 +39,11 @@ jobs:
         unzip -q awscliv2.zip
         sudo ./aws/install --update
         aws --version
+
         curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
         chmod +x kubectl && sudo mv kubectl /usr/local/bin/
         kubectl version --client
+
         curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
         helm version
 
@@ -113,34 +115,43 @@ jobs:
     - name: Get NLB DNS
       id: nlb
       run: |
+        echo "Waiting for NLB DNS..."
         for i in {1..20}; do
           DNS=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           if [ -n "$DNS" ]; then
             echo "nlb_dns=$DNS" >> $GITHUB_OUTPUT
+            echo "✅ NLB DNS: $DNS"
             exit 0
           fi
           sleep 30
         done
+        echo "❌ NLB DNS not found"
         exit 1
 
     # ----------------------------
-    # Terraform Apply API integration for app
+    # Terraform Apply API integration (APP ONLY)
     # ----------------------------
     - name: Terraform Apply API integration
       run: |
+        set -e
         terraform -chdir=${TF_DIR} apply -auto-approve \
           -var-file=${ENV}.tfvars \
           -var="integration_uri=http://${{ steps.nlb.outputs.nlb_dns }}" \
           -var="app_port=${APP_PORT}"
 
     # ----------------------------
-    # Get API Gateway URL
+    # Get API Gateway URL (clean)
     # ----------------------------
     - name: Get API Gateway URL
       id: api
       run: |
-        API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url)
+        API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url | tr -d '\r\n' | xargs)
+        if [ -z "$API_URL" ]; then
+          echo "❌ API Gateway URL not found"
+          exit 1
+        fi
         echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+        echo "✅ API Gateway URL: $API_URL"
 
     # ----------------------------
     # Install Argo CD
@@ -159,35 +170,17 @@ jobs:
           --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"="/\$2"
 
     # ----------------------------
-    # Get Argo CD ingress DNS
+    # Final URLs
     # ----------------------------
-    - name: Get Argo CD Ingress
-      id: argocd
+    - name: Show final URLs
       run: |
-        INGRESS_HOST=$(kubectl get ingress argocd-server -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-        if [ -z "$INGRESS_HOST" ]; then
-          echo "❌ Argo CD ingress not ready!"
-          exit 1
-        fi
-        echo "argo_ingress_dns=$INGRESS_HOST" >> $GITHUB_OUTPUT
-
-    # ----------------------------
-    # Terraform Apply API integration for Argo CD route
-    # ----------------------------
-    - name: Terraform Apply API integration for Argo CD
-      run: |
-        terraform -chdir=${TF_DIR} apply -auto-approve \
-          -var-file=${ENV}.tfvars \
-          -var="argocd_ingress_dns=${{ steps.argocd.outputs.argo_ingress_dns }}"
-
-    # ----------------------------
-    # Show final URLs
-    # ----------------------------
-    - name: Show URLs
-      run: |
-        API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url)
-        echo "API Gateway URL for app: $API_URL"
-        echo "API Gateway URL for Argo CD: $API_URL/argo/"
+        echo "===================================="
+        echo "✅ API Gateway URL (APP):"
+        echo "${{ steps.api.outputs.api_url }}"
+        echo ""
+        echo "✅ Argo CD URL:"
+        echo "https://${{ steps.nlb.outputs.nlb_dns }}/argo"
+        echo "===================================="
 
 
 

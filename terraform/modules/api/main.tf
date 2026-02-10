@@ -34,15 +34,14 @@ resource "aws_apigatewayv2_api" "http_api" {
 }
 
 # ----------------------------
-# NLB Integration app
+# NLB Integration (APP )
+# integration_uri = NLB LISTENER ARN
 # ----------------------------
 resource "aws_apigatewayv2_integration" "nlb_integration" {
-  count = var.integration_uri == "" ? 0 : 1
-
   api_id                 = aws_apigatewayv2_api.http_api.id
   integration_type       = "HTTP_PROXY"
   integration_method     = "ANY"
-  integration_uri        = var.integration_uri
+  integration_uri        = var.nlb_listener_arn
 
   connection_type        = "VPC_LINK"
   connection_id          = aws_apigatewayv2_vpc_link.vpc_link.id
@@ -50,36 +49,12 @@ resource "aws_apigatewayv2_integration" "nlb_integration" {
 }
 
 # ----------------------------
-# Route app
+# Route /app
 # ----------------------------
-resource "aws_apigatewayv2_route" "proxy_route" {
-  count = var.integration_uri == "" ? 0 : 1
-
+resource "aws_apigatewayv2_route" "app_route" {
   api_id    = aws_apigatewayv2_api.http_api.id
-  route_key = "ANY /{proxy+}"
-  target    = "integrations/${aws_apigatewayv2_integration.nlb_integration[0].id}"
-}
-
-# ----------------------------
-# Argo CD Integration
-# ----------------------------
-resource "aws_apigatewayv2_integration" "argocd_integration" {
-  api_id                 = aws_apigatewayv2_api.http_api.id
-  integration_type       = "HTTP_PROXY"
-  integration_method     = "ANY"
-  integration_uri        = "https://${var.argocd_ingress_dns}/argo"
-  connection_type        = "VPC_LINK"
-  connection_id          = aws_apigatewayv2_vpc_link.vpc_link.id
-  payload_format_version = "1.0"
-}
-
-# ----------------------------
-# Route لـ Argo CD
-# ----------------------------
-resource "aws_apigatewayv2_route" "argocd_route" {
-  api_id    = aws_apigatewayv2_api.http_api.id
-  route_key = "ANY /argo/{proxy+}"
-  target    = "integrations/${aws_apigatewayv2_integration.argocd_integration.id}"
+  route_key = "ANY /app/{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
 }
 
 # ----------------------------
@@ -90,6 +65,7 @@ resource "aws_apigatewayv2_stage" "default_stage" {
   name        = "$default"
   auto_deploy = true
 }
+
 
 
 

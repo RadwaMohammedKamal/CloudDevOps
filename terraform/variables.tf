@@ -17,6 +17,10 @@ variable "integration_uri" {
   type        = string
   default     = ""
 }
+variable "nlb_listener_arn" {
+  description = "NLB Listener ARN created by ingress-nginx"
+  type        = string
+}
 
 
 # variable "region" { type = string }
