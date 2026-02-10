@@ -159,7 +159,7 @@ jobs:
           -var="app_port=${APP_PORT}"
 
     # ----------------------------
-    # Get API Gateway URL (fixed)
+    # Get API Gateway URL
     # ----------------------------
     - name: Get API Gateway URL
       id: api
@@ -174,23 +174,18 @@ jobs:
         echo "✅ API Gateway URL: $API_URL"
 
     # ----------------------------
-    # Check API Gateway reachable
+    # Check API Gateway via AWS CLI
     # ----------------------------
-    - name: Check API Gateway reachable
+    - name: Check API Gateway exists via AWS CLI
       run: |
-        API_URL="${{ steps.api.outputs.api_url }}"
-        echo "Checking API Gateway at $API_URL"
-        for i in {1..10}; do
-          STATUS=$(curl -o /dev/null -s -w "%{http_code}" "$API_URL")
-          if [[ "$STATUS" == "200" ]] || [[ "$STATUS" == "404" ]]; then
-            echo "✅ API Gateway reachable with HTTP code $STATUS"
-            exit 0
-          fi
-          echo "Retry $i/10: API Gateway not ready (status=$STATUS)..."
-          sleep 15
-        done
-        echo "❌ API Gateway not reachable after retries"
-        exit 1
+        API_ID=$(aws apigatewayv2 get-apis \
+          --query "Items[?ApiEndpoint=='${{ steps.api.outputs.api_url }}'].ApiId" \
+          --output text)
+        if [ -z "$API_ID" ]; then
+          echo "❌ API Gateway not found in AWS!"
+          exit 1
+        fi
+        echo "✅ API Gateway exists with API ID: $API_ID"
 
     # ----------------------------
     # Install Argo CD
@@ -209,18 +204,22 @@ jobs:
           --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"="/\$2"
 
     # ----------------------------
-    # Check Argo CD reachable
+    # Check Argo CD pods & ingress
     # ----------------------------
-    - name: Check Argo CD reachable
+    - name: Check Argo CD ready
       run: |
-        API_URL="${{ steps.api.outputs.api_url }}"
-        for i in {1..10}; do
-          curl -f "${API_URL}/argo" && echo "✅ Argo CD reachable" && exit 0
-          echo "Retry $i/10: Argo CD not ready..."
-          sleep 15
-        done
-        echo "❌ Argo CD not reachable after retries"
-        exit 1
+        echo "Checking Argo CD pods..."
+        kubectl wait --for=condition=Ready pods --all -n $NAMESPACE --timeout=10m
+        kubectl get pods -n $NAMESPACE
+
+        echo "Checking Argo CD ingress..."
+        INGRESS_HOST=$(kubectl get ingress argocd-server -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        if [ -z "$INGRESS_HOST" ]; then
+          echo "❌ Argo CD ingress not ready!"
+          exit 1
+        fi
+        echo "✅ Argo CD ingress ready: $INGRESS_HOST"
+        echo "argo_cd_url=https://$INGRESS_HOST/argo" >> $GITHUB_OUTPUT
 
     # ----------------------------
     # Final output
@@ -229,7 +228,7 @@ jobs:
       run: |
         echo "=============================="
         echo "API Gateway URL: ${{ steps.api.outputs.api_url }}"
-        echo "Argo CD URL: ${{ steps.api.outputs.api_url }}/argo"
+        echo "Argo CD URL: ${{ steps.check_argo_cd_ready.outputs.argo_cd_url }}"
         echo "=============================="
 
 
