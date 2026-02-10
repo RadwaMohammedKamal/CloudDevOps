@@ -166,8 +166,8 @@ jobs:
       run: |
         API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url 2>/dev/null | tr -d '\r\n')
         if [ -z "$API_URL" ]; then
-           echo "❌ API Gateway URL not found!"
-           exit 1
+          echo "❌ API Gateway URL not found!"
+          exit 1
         fi
         echo "api_url=$API_URL" >> $GITHUB_OUTPUT
         echo "✅ API Gateway URL: $API_URL"
