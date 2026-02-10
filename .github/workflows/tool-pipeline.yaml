@@ -23,9 +23,15 @@ jobs:
       APP_PORT: 80
 
     steps:
+    # ----------------------------
+    # Checkout repo
+    # ----------------------------
     - name: Checkout repo
       uses: actions/checkout@v3
 
+    # ----------------------------
+    # Install AWS CLI, kubectl, Helm
+    # ----------------------------
     - name: Install tools
       run: |
         set -e
@@ -39,8 +45,14 @@ jobs:
         curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
         helm version
 
+    # ----------------------------
+    # Setup Terraform
+    # ----------------------------
     - uses: hashicorp/setup-terraform@v2
 
+    # ----------------------------
+    # Configure AWS credentials
+    # ----------------------------
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -48,27 +60,42 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
+    # ----------------------------
+    # Terraform Init & Plan
+    # ----------------------------
     - name: Terraform Init
       run: terraform -chdir=${TF_DIR} init -input=false
 
     - name: Terraform Plan
       run: terraform -chdir=${TF_DIR} plan -var-file=${ENV}.tfvars
 
+    # ----------------------------
+    # Setup kubeconfig
+    # ----------------------------
     - name: Setup kubeconfig
       run: |
         aws eks update-kubeconfig --region $AWS_REGION --name "${ENV}-eks"
         kubectl wait --for=condition=Ready nodes --all --timeout=20m
 
+    # ----------------------------
+    # Ensure namespace
+    # ----------------------------
     - name: Ensure namespace
       run: |
         kubectl get ns $NAMESPACE || kubectl create ns $NAMESPACE
 
+    # ----------------------------
+    # Add Helm repos
+    # ----------------------------
     - name: Add Helm repos
       run: |
         helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
         helm repo add argo https://argoproj.github.io/argo-helm
         helm repo update
 
+    # ----------------------------
+    # Install ingress-nginx (NLB)
+    # ----------------------------
     - name: Install ingress-nginx
       run: |
         helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
@@ -80,6 +107,9 @@ jobs:
           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
           --set controller.service.targetPorts.http=${APP_PORT}
 
+    # ----------------------------
+    # Get NLB DNS with retry
+    # ----------------------------
     - name: Get NLB DNS
       id: nlb
       run: |
@@ -97,23 +127,29 @@ jobs:
         echo "❌ NLB DNS not found after retries"
         exit 1
 
+    # ----------------------------
+    # Pre-check VPC Link & Security Group
+    # ----------------------------
     - name: Pre-check API VPC Link & Security Group
       run: |
         echo "Validating VPC Link and SGs..."
-        VPC_LINK_ID=$(terraform -chdir=${TF_DIR} output -raw vpc_link_id 2>/dev/null || echo "")
+        VPC_LINK_ID=$(terraform -chdir=${TF_DIR} output -raw vpc_link_id 2>/dev/null | tr -d '\r\n')
         if [ -z "$VPC_LINK_ID" ]; then
           echo "❌ VPC Link not created or output missing!"
           exit 1
         fi
         echo "✅ VPC Link exists: $VPC_LINK_ID"
 
-        SG_ID=$(terraform -chdir=${TF_DIR} output -raw vpc_link_sg_id 2>/dev/null || echo "")
+        SG_ID=$(terraform -chdir=${TF_DIR} output -raw vpc_link_sg_id 2>/dev/null | tr -d '\r\n')
         if [ -z "$SG_ID" ]; then
           echo "❌ VPC Link Security Group not created or output missing!"
           exit 1
         fi
         echo "✅ VPC Link SG exists: $SG_ID"
 
+    # ----------------------------
+    # Terraform Apply API integration
+    # ----------------------------
     - name: Terraform Apply API integration
       run: |
         set -e
@@ -122,17 +158,27 @@ jobs:
           -var="integration_uri=http://${{ steps.nlb.outputs.nlb_dns }}" \
           -var="app_port=${APP_PORT}"
 
+    # ----------------------------
+    # Get API Gateway URL
+    # ----------------------------
     - name: Get API Gateway URL
       id: api
       run: |
         API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url 2>/dev/null | tr -d '\r\n')
+        if [ -z "$API_URL" ]; then
+          echo "❌ API Gateway URL not found!"
+          exit 1
+        fi
         echo "api_url=$API_URL" >> $GITHUB_OUTPUT
         echo "✅ API Gateway URL: $API_URL"
 
+    # ----------------------------
+    # Check API Gateway reachable
+    # ----------------------------
     - name: Check API Gateway reachable
       run: |
         for i in {1..10}; do
-          STATUS=$(curl -o /dev/null -s -w "%{http_code}\n" "${{ steps.api.outputs.api_url }}")
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}" "${{ steps.api.outputs.api_url }}")
           if [[ "$STATUS" == "200" ]] || [[ "$STATUS" == "404" ]]; then
             echo "✅ API Gateway reachable with HTTP code $STATUS"
             exit 0
@@ -143,6 +189,9 @@ jobs:
         echo "❌ API Gateway not reachable after retries"
         exit 1
 
+    # ----------------------------
+    # Install Argo CD
+    # ----------------------------
     - name: Install Argo CD
       run: |
         helm upgrade --install argocd argo/argo-cd \
@@ -156,6 +205,9 @@ jobs:
           --set server.ingress.paths[0].pathType=Prefix \
           --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"="/\$2"
 
+    # ----------------------------
+    # Check Argo CD reachable
+    # ----------------------------
     - name: Check Argo CD reachable
       run: |
         for i in {1..10}; do
@@ -166,12 +218,16 @@ jobs:
         echo "❌ Argo CD not reachable after retries"
         exit 1
 
+    # ----------------------------
+    # Final output
+    # ----------------------------
     - name: Show URLs
       run: |
         echo "=============================="
         echo "API Gateway URL: ${{ steps.api.outputs.api_url }}"
         echo "Argo CD URL: ${{ steps.api.outputs.api_url }}/argo"
         echo "=============================="
+
 
 
 
