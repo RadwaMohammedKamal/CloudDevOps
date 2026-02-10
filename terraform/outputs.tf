@@ -16,6 +16,13 @@ output "eks_fargate_pod_role_arn" { value = module.iam.eks_fargate_pod_role_arn 
 #   value       = ""
 #   description = "Security Group ID of the NLB (empty if not created yet)"
 # }
+output "vpc_link_id" {
+  value = module.api.vpc_link_id
+}
+
+output "vpc_link_sg_id" {
+  value = module.api.vpc_link_sg_id
+}
 
 # Output API Gateway URL
 output "api_gateway_url" {

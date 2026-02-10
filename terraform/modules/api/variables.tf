@@ -4,8 +4,9 @@ variable "private_subnets" { type = list(string) }
 variable "tags" { type = map(string) }
 
 variable "integration_uri" {
-  type    = string
-  default = ""
+  description = "URI for API integration (NLB DNS)"
+  type        = string
+  default     = ""
 }
 
 

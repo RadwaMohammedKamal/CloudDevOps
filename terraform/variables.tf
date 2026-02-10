@@ -21,6 +21,11 @@ variable "app_port" {
 variable "mongodb_uri" {
   type = string
 }
+variable "integration_uri" {
+  description = "URI for API integration (NLB DNS)"
+  type        = string
+  default     = ""
+}
 
 
 # variable "region" { type = string }

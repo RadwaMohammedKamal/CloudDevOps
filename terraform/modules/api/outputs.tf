@@ -7,6 +7,20 @@ output "vpc_link_sg_id" {
   value       = aws_security_group.vpc_link_sg.id
   description = "Security Group ID of the VPC Link for API Gateway"
 }
+output "vpc_link_id" {
+  value       = aws_apigatewayv2_vpc_link.vpc_link.id
+  description = "VPC Link ID for API integration"
+}
+
+output "vpc_link_sg_id" {
+  value       = aws_security_group.vpc_link_sg.id
+  description = "Security Group ID for the VPC Link"
+}
+
+output "api_gateway_url" {
+  value       = aws_apigatewayv2_api.http_api.api_endpoint
+  description = "API Gateway base URL"
+}
 
 
 
