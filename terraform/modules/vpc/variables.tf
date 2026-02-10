@@ -6,7 +6,7 @@ variable "private_subnet_cidrs" { type = list(string) }
 variable "data_subnet_cidrs" { type = list(string) }
 variable "tags" { type = map(string)}
 variable "app_port" { type = number }
-variable "nlb_sg_id" {
-  description = "Security group ID for the ALB"
-  type        = string
-}
+# variable "nlb_sg_id" {
+#   description = "Security group ID for the ALB"
+#   type        = string
+# }

@@ -1,200 +1,414 @@
-name: EKS Setup Tool Workflow
+name: EKS Full Deployment Pipeline
 
 on:
   workflow_dispatch:
     inputs:
       env:
-        description: 'Environment'
+        description: Environment
         required: true
-        default: 'prod'
+        default: prod
         type: choice
         options:
           - prod
           - nonprod
 
 jobs:
-  eks-setup:
+  eks-deploy:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: eu-north-1
       ENV: ${{ github.event.inputs.env }}
       NAMESPACE: prod
       TF_DIR: terraform
+      APP_PORT: 80
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    # ----------------------------
+    # Checkout repo
+    # ----------------------------
+    - name: Checkout repo
+      uses: actions/checkout@v3
 
-      - name: Install AWS CLI, kubectl, Helm
-        run: |
-          set -euo pipefail
-          if ! command -v aws &> /dev/null; then
-            curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
-            unzip -q awscliv2.zip
-            sudo ./aws/install --update
+    # ----------------------------
+    # Install AWS CLI, kubectl, Helm
+    # ----------------------------
+    - name: Install tools
+      run: |
+        set -e
+        curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
+        unzip -q awscliv2.zip
+        sudo ./aws/install --update
+        aws --version
+        curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+        chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+        kubectl version --client
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        helm version
+
+    # ----------------------------
+    # Setup Terraform
+    # ----------------------------
+    - uses: hashicorp/setup-terraform@v2
+
+    # ----------------------------
+    # Configure AWS credentials
+    # ----------------------------
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    # ----------------------------
+    # Terraform Init
+    # ----------------------------
+    - name: Terraform Init
+      run: terraform -chdir=${TF_DIR} init -input=false
+
+    # ----------------------------
+    # Terraform Plan (Optional check)
+    # ----------------------------
+    - name: Terraform Plan
+      run: terraform -chdir=${TF_DIR} plan -var-file=${TF_DIR}/${ENV}.tfvars
+
+    # ----------------------------
+    # Setup kubeconfig
+    # ----------------------------
+    - name: Setup kubeconfig
+      run: |
+        aws eks update-kubeconfig --region $AWS_REGION --name "${ENV}-eks"
+        kubectl wait --for=condition=Ready nodes --all --timeout=20m
+
+    # ----------------------------
+    # Ensure namespace
+    # ----------------------------
+    - name: Ensure namespace
+      run: |
+        kubectl get ns $NAMESPACE || kubectl create ns $NAMESPACE
+
+    # ----------------------------
+    # Add Helm repos
+    # ----------------------------
+    - name: Add Helm repos
+      run: |
+        helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+        helm repo add argo https://argoproj.github.io/argo-helm
+        helm repo update
+
+    # ----------------------------
+    # Install ingress-nginx (creates NLB)
+    # ----------------------------
+    - name: Install ingress-nginx
+      run: |
+        helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+          -n $NAMESPACE \
+          --wait \
+          --timeout 20m \
+          --set controller.service.type=LoadBalancer \
+          --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
+          --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
+          --set controller.service.targetPorts.http=${APP_PORT}
+
+    # ----------------------------
+    # Get NLB DNS with retry
+    # ----------------------------
+    - name: Get NLB DNS
+      id: nlb
+      run: |
+        echo "Waiting for NLB DNS..."
+        for i in {1..20}; do
+          DNS=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          if [ -n "$DNS" ]; then
+            echo "nlb_dns=$DNS" >> $GITHUB_OUTPUT
+            echo "✅ Found NLB DNS: $DNS"
+            exit 0
           fi
-          aws --version
-          curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-          kubectl version --client
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          helm version
+          echo "Retry $i/20: NLB DNS not ready yet..."
+          sleep 30
+        done
+        echo "❌ NLB DNS not found after retries"
+        exit 1
 
-      - name: Install Terraform
-        uses: hashicorp/setup-terraform@v2
+    # ----------------------------
+    # Pre-check: Validate VPC Link & Security Groups
+    # ----------------------------
+    - name: Pre-check API VPC Link & Security Group
+      run: |
+        echo "Validating VPC Link and SGs..."
+        VPC_LINK_ID=$(terraform -chdir=${TF_DIR} output -raw vpc_link_id 2>/dev/null || echo "")
+        if [ -z "$VPC_LINK_ID" ]; then
+          echo "❌ VPC Link not created or output missing!"
+          exit 1
+        fi
+        echo "✅ VPC Link exists: $VPC_LINK_ID"
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+        SG_ID=$(terraform -chdir=${TF_DIR} output -raw vpc_link_sg_id 2>/dev/null || echo "")
+        if [ -z "$SG_ID" ]; then
+          echo "❌ VPC Link Security Group not created or output missing!"
+          exit 1
+        fi
+        echo "✅ VPC Link SG exists: $SG_ID"
 
-      - name: Setup EKS kubeconfig
-        run: |
-          set -euo pipefail
-          aws eks update-kubeconfig --region $AWS_REGION --name "${ENV}-eks"
-          echo "Waiting for all nodes to be ready..."
-          kubectl wait --for=condition=Ready nodes --all --timeout=20m
-          kubectl get nodes
+    # ----------------------------
+    # Terraform Apply API integration
+    # ----------------------------
+    - name: Terraform Apply API integration
+      run: |
+        set -e
+        terraform -chdir=${TF_DIR} apply -auto-approve \
+          -var-file=${TF_DIR}/${ENV}.tfvars \
+          -var="integration_uri=http://${{ steps.nlb.outputs.nlb_dns }}" \
+          -var="app_port=${APP_PORT}"
 
-      - name: Terraform init with backend
-        run: |
-          terraform -chdir=${TF_DIR} init \
-            -backend-config="bucket=cloud-devops-nti-s3" \
-            -backend-config="key=terraform/terraform.tfstate" \
-            -backend-config="region=eu-north-1" \
-            -backend-config="encrypt=true"
+    # ----------------------------
+    # Get API Gateway URL
+    # ----------------------------
+    - name: Get API Gateway URL
+      id: api
+      run: |
+        API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url)
+        echo "api_url=$API_URL" >> $GITHUB_OUTPUT
 
-      - name: Get Terraform outputs safely
-        id: tf_outputs
-        run: |
-          set -euo pipefail
-          API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url 2>/dev/null | tr -d '\r\n')
-          NLB_TG_ARN=$(terraform -chdir=${TF_DIR} output -raw nlb_tg_arn 2>/dev/null \
-                        | grep -E '^arn:aws:elasticloadbalancing:' \
-                        | sed 's/::debug.*$//' \
-                        | tr -d '\r\n')
-
-          echo "API_URL=$API_URL" >> $GITHUB_OUTPUT
-          echo "NLB_TG_ARN=$NLB_TG_ARN" >> $GITHUB_OUTPUT
-
-      - name: Ensure namespace exists
-        run: |
-          kubectl get namespace $NAMESPACE || kubectl create namespace $NAMESPACE
-
-      - name: Add Helm repos
-        run: |
-          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-          helm repo add argo https://argoproj.github.io/argo-helm
-          helm repo update
-
-      - name: Pre-check NLB TG
-        if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
-        run: |
-          echo "Checking NLB Target Group..."
-          aws elbv2 describe-target-groups --target-group-arns "${{ steps.tf_outputs.outputs.NLB_TG_ARN }}" || { echo "❌ NLB TG not found"; exit 1; }
-
-      - name: Wait for NLB TG health (optional, 120s)
-        if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
-        run: |
-          echo "Waiting 120s for NLB Target Group to stabilize..."
-          sleep 120
-
-      - name: Ensure all nodes ready and registered to NLB
-        run: |
-          echo "Checking nodes are ready and NLB targets registered..."
-          for i in $(seq 1 10); do
-            READY=$(kubectl get nodes --no-headers | grep -c "Ready")
-            TOTAL=$(kubectl get nodes --no-headers | wc -l)
-            if [ "$READY" -eq "$TOTAL" ]; then
-              echo "✅ All nodes are Ready"
-              break
-            fi
-            echo "Nodes not ready yet, waiting 30s..."
-            sleep 30
-          done
-          aws elbv2 describe-target-health --target-group-arn "${{ steps.tf_outputs.outputs.NLB_TG_ARN }}"
-
-      - name: Cleanup stuck Helm release (if any)
-        if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
-        run: |
-          if helm status ingress-nginx -n $NAMESPACE 2>/dev/null | grep -q "pending"; then
-            echo "Release stuck, uninstalling..."
-            helm uninstall ingress-nginx -n $NAMESPACE || true
+    # ----------------------------
+    # Check API Gateway reachable
+    # ----------------------------
+    - name: Check API Gateway reachable
+      run: |
+        for i in {1..10}; do
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}\n" "${{ steps.api.outputs.api_url }}")
+          if [[ "$STATUS" == "200" ]] || [[ "$STATUS" == "404" ]]; then
+            echo "✅ API Gateway reachable with HTTP code $STATUS"
+            exit 0
           fi
+          echo "Retry $i/10: API Gateway not ready (status=$STATUS)..."
+          sleep 15
+        done
+        echo "❌ API Gateway not reachable after retries"
+        exit 1
 
-      - name: Install NGINX Ingress (attach to existing NLB TG) with retries
-        if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
-        run: |
-          RETRIES=5
-          for i in $(seq 1 $RETRIES); do
-            echo "Helm install attempt $i..."
-            helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-              --namespace $NAMESPACE \
-              --wait \
-              --timeout 20m \
-              --set controller.service.type=LoadBalancer \
-              --set controller.service.loadBalancerClass=service.k8s.aws/nlb \
-              --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
-              --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
-              --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-target-group-arn"="${{ steps.tf_outputs.outputs.NLB_TG_ARN }}" \
-              --set controller.healthCheckPath="" \
-              --set controller.healthCheckPort="traffic-port" \
-              --set controller.healthCheckProtocol="TCP" && break
-            echo "❌ Helm install failed, retrying in 60s..."
-            sleep 60
-          done
+    # ----------------------------
+    # Install Argo CD
+    # ----------------------------
+    - name: Install Argo CD
+      run: |
+        helm upgrade --install argocd argo/argo-cd \
+          -n $NAMESPACE \
+          --wait \
+          --timeout 15m \
+          --set server.service.type=ClusterIP \
+          --set server.ingress.enabled=true \
+          --set server.ingress.ingressClassName=nginx \
+          --set server.ingress.paths[0].path="/argo(/|$)(.*)" \
+          --set server.ingress.paths[0].pathType=Prefix \
+          --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"="/\$2"
 
-      - name: Check NGINX pods ready
-        run: |
-          echo "Checking NGINX Ingress controller pods..."
-          kubectl -n $NAMESPACE wait --for=condition=Ready pod -l app.kubernetes.io/name=ingress-nginx --timeout=20m
-          kubectl -n $NAMESPACE get pods
+    # ----------------------------
+    # Check Argo CD reachable
+    # ----------------------------
+    - name: Check Argo CD reachable
+      run: |
+        for i in {1..10}; do
+          curl -f "${{ steps.api.outputs.api_url }}/argo" && echo "✅ Argo CD reachable" && exit 0
+          echo "Retry $i/10: Argo CD not ready..."
+          sleep 15
+        done
+        echo "❌ Argo CD not reachable after retries"
+        exit 1
 
-      - name: Install Argo CD
-        run: |
-          helm upgrade --install argocd argo/argo-cd \
-            --namespace $NAMESPACE \
-            --wait \
-            --timeout 10m \
-            --set server.service.type=ClusterIP \
-            --set server.ingress.enabled=true \
-            --set server.ingress.ingressClassName=nginx \
-            --set server.ingress.paths[0].path="/argo(/|$)(.*)" \
-            --set server.ingress.paths[0].pathType=Prefix \
-            --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"=/\$2
+    # ----------------------------
+    # Final output
+    # ----------------------------
+    - name: Show URLs
+      run: |
+        echo "=============================="
+        echo "API Gateway URL: ${{ steps.api.outputs.api_url }}"
+        echo "Argo CD URL: ${{ steps.api.outputs.api_url }}/argo"
+        echo "=============================="
 
-      - name: Check NLB Target Group Health
-        if: ${{ steps.tf_outputs.outputs.NLB_TG_ARN != '' }}
-        run: |
-          echo "Checking Target Group health..."
-          aws elbv2 describe-target-health \
-            --target-group-arn "${{ steps.tf_outputs.outputs.NLB_TG_ARN }}" \
-            --query 'TargetHealthDescriptions[*].TargetHealth.State'
 
-      - name: Curl Argo CD via API Gateway
-        if: ${{ steps.tf_outputs.outputs.API_URL != '' }}
-        run: |
-          API_URL="${{ steps.tf_outputs.outputs.API_URL }}"
-          echo "Testing Argo CD URL:"
-          echo "$API_URL/argo"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/argo")
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
-            echo "✅ Argo CD is reachable via API Gateway"
-          else
-            echo "❌ Argo CD NOT reachable (HTTP $HTTP_CODE)"
-            exit 1
-          fi
 
-      - name: Show access URLs
-        run: |
-          echo ""
-          echo "=============================="
-          echo "API Base URL:" 
-          echo "${{ steps.tf_outputs.outputs.API_URL }}"
-          echo ""
-          echo "Argo CD URL:" 
-          echo "${{ steps.tf_outputs.outputs.API_URL }}/argo" 
-          echo "=============================="
+# name: EKS Full Deployment Pipeline
+
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       env:
+#         description: Environment
+#         required: true
+#         default: prod
+#         type: choice
+#         options:
+#           - prod
+#           - nonprod
+
+# jobs:
+#   eks-deploy:
+#     runs-on: ubuntu-latest
+#     env:
+#       AWS_REGION: eu-north-1
+#       ENV: ${{ github.event.inputs.env }}
+#       NAMESPACE: prod
+#       TF_DIR: terraform
+#       APP_PORT: 80
+
+#     steps:
+#     # ----------------------------
+#     # Checkout repo
+#     # ----------------------------
+#     - name: Checkout repo
+#       uses: actions/checkout@v3
+
+#     # ----------------------------
+#     # Install AWS CLI, kubectl, Helm
+#     # ----------------------------
+#     - name: Install tools
+#       run: |
+#         set -e
+#         # AWS CLI
+#         curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
+#         unzip -q awscliv2.zip
+#         sudo ./aws/install --update
+#         aws --version
+
+#         # kubectl
+#         curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+#         chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+#         kubectl version --client
+
+#         # Helm
+#         curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+#         helm version
+
+#     # ----------------------------
+#     # Setup Terraform
+#     # ----------------------------
+#     - uses: hashicorp/setup-terraform@v2
+
+#     # ----------------------------
+#     # Configure AWS credentials
+#     # ----------------------------
+#     - name: Configure AWS credentials
+#       uses: aws-actions/configure-aws-credentials@v2
+#       with:
+#         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+#         aws-region: ${{ env.AWS_REGION }}
+
+#     # ----------------------------
+#     # Terraform init
+#     # ----------------------------
+#     - name: Terraform Init
+#       run: terraform -chdir=${TF_DIR} init -input=false
+
+#     # ----------------------------
+#     # Setup kubeconfig
+#     # ----------------------------
+#     - name: Setup kubeconfig
+#       run: |
+#         aws eks update-kubeconfig --region $AWS_REGION --name "${ENV}-eks"
+#         kubectl wait --for=condition=Ready nodes --all --timeout=20m
+
+#     # ----------------------------
+#     # Ensure namespace
+#     # ----------------------------
+#     - name: Ensure namespace
+#       run: |
+#         kubectl get ns $NAMESPACE || kubectl create ns $NAMESPACE
+
+#     # ----------------------------
+#     # Add Helm repos
+#     # ----------------------------
+#     - name: Add Helm repos
+#       run: |
+#         helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+#         helm repo add argo https://argoproj.github.io/argo-helm
+#         helm repo update
+
+#     # ----------------------------
+#     # Install ingress-nginx (creates NLB)
+#     # ----------------------------
+#     - name: Install ingress-nginx
+#       run: |
+#         helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+#           -n $NAMESPACE \
+#           --wait \
+#           --timeout 20m \
+#           --set controller.service.type=LoadBalancer \
+#           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
+#           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
+#           --set controller.service.targetPorts.http=${APP_PORT}
+
+#     # ----------------------------
+#     # Get NLB DNS
+#     # ----------------------------
+#     - name: Get NLB DNS
+#       id: nlb
+#       run: |
+#         echo "Waiting for NLB DNS..."
+#         for i in {1..20}; do
+#           DNS=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE \
+#             -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+#           if [ -n "$DNS" ]; then
+#             echo "nlb_dns=$DNS" >> $GITHUB_OUTPUT
+#             echo "✅ Found NLB DNS: $DNS"
+#             exit 0
+#           fi
+#           sleep 30
+#         done
+#         echo "❌ NLB DNS not found"
+#         exit 1
+
+#     # ----------------------------
+#     # Terraform Apply API integration
+#     # ----------------------------
+#     - name: Terraform Apply API integration
+#       run: |
+#         terraform -chdir=${TF_DIR} apply -auto-approve \
+#           -var-file=${TF_DIR}/${ENV}.tfvars \
+#           -var="integration_uri=http://${{ steps.nlb.outputs.nlb_dns }}" \
+#           -var="app_port=${APP_PORT}"
+
+#     # ----------------------------
+#     # Install Argo CD
+#     # ----------------------------
+#     - name: Install Argo CD
+#       run: |
+#         helm upgrade --install argocd argo/argo-cd \
+#           -n $NAMESPACE \
+#           --wait \
+#           --timeout 15m \
+#           --set server.service.type=ClusterIP \
+#           --set server.ingress.enabled=true \
+#           --set server.ingress.ingressClassName=nginx \
+#           --set server.ingress.paths[0].path="/argo(/|$)(.*)" \
+#           --set server.ingress.paths[0].pathType=Prefix \
+#           --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"="/\$2"
+
+#     # ----------------------------
+#     # Get API Gateway URL
+#     # ----------------------------
+#     - name: Get API Gateway URL
+#       id: api
+#       run: |
+#         API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url)
+#         echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+
+#     # ----------------------------
+#     # Health check Argo
+#     # ----------------------------
+#     - name: Check Argo CD reachable
+#       run: |
+#         echo "Checking Argo CD..."
+#         curl -f "${{ steps.api.outputs.api_url }}/argo" || exit 1
+
+#     # ----------------------------
+#     # Final output
+#     # ----------------------------
+#     - name: Show URLs
+#       run: |
+#         echo "=============================="
+#         echo "API Gateway URL: ${{ steps.api.outputs.api_url }}"
+#         echo "Argo CD URL: ${{ steps.api.outputs.api_url }}/argo"
+#         echo "=============================="
