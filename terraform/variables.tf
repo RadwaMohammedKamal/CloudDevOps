@@ -17,6 +17,11 @@ variable "integration_uri" {
   type        = string
   default     = ""
 }
+variable "nlb_listener_arn" {
+  description = "NLB Listener ARN for API Gateway integration"
+  type        = string
+  default     = ""  
+}
 
 
 # variable "region" { type = string }
