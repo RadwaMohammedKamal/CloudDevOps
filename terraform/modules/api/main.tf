@@ -40,12 +40,22 @@ resource "aws_apigatewayv2_integration" "nlb_integration" {
   api_id                 = aws_apigatewayv2_api.http_api.id
   integration_type       = "HTTP_PROXY"
   integration_method     = "ANY"
-  integration_uri        = "http://${var.nlb_dns}:${80}/"
+  integration_uri        = var.nlb_listener_arn 
   connection_type        = "VPC_LINK"
   connection_id          = aws_apigatewayv2_vpc_link.vpc_link.id
   payload_format_version = "1.0"
 }
+# ----------------------------
+# Route (Catch-all)
+# ----------------------------
+resource "aws_apigatewayv2_route" "api_route" {
+  api_id    = aws_apigatewayv2_api.http_api.id
 
+  #  paths
+  route_key = "ANY /{proxy+}"
+
+  target = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
+}
 # ----------------------------
 # Stage
 # ----------------------------

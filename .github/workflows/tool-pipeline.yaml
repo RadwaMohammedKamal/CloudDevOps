@@ -110,40 +110,35 @@ jobs:
           --set controller.service.targetPorts.http=${APP_PORT}
 
     # ----------------------------
-    # Get NLB DNS
+    # Get NLB ARN & Listener ARN
     # ----------------------------
-    - name: Get NLB DNS
-      id: nlb
+    - name: Get NLB Listener ARN
+      id: nlb_listener
       run: |
-        SERVICE_NAME="ingress-nginx-controller"
-
-        echo "Waiting for NLB DNS to be available..."
-        NLB_DNS=""
-        for i in {1..40}; do
-          NLB_DNS=$(kubectl get svc -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
-          if [ -n "$NLB_DNS" ]; then
-            echo "✅ NLB DNS found: $NLB_DNS"
-            break
-          fi
-          sleep 15
-        done
-
-        if [ -z "$NLB_DNS" ]; then
-          echo "❌ NLB DNS not found!"
+        NLB_NAME="ingress-nginx-controller"
+        NLB_ARN=$(aws elbv2 describe-load-balancers --names $NLB_NAME \
+          --query "LoadBalancers[0].LoadBalancerArn" --output text)
+        if [ -z "$NLB_ARN" ]; then
+          echo "❌ NLB ARN not found"
           exit 1
         fi
-
-        echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
+        LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN \
+          --query "Listeners[0].ListenerArn" --output text)
+        if [ -z "$LISTENER_ARN" ]; then
+          echo "❌ NLB Listener ARN not found"
+          exit 1
+        fi
+        echo "✅ NLB Listener ARN: $LISTENER_ARN"
+        echo "nlb_listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
 
     # ----------------------------
-    # Terraform Apply API integration (HTTP Proxy to NLB)
+    # Terraform Apply (API Gateway → NLB Listener ARN)
     # ----------------------------
     - name: Terraform Apply API integration
       run: |
         terraform -chdir=${TF_DIR} apply -auto-approve \
           -var-file=${ENV}.tfvars \
-          -var="nlb_dns=${{ steps.nlb.outputs.nlb_dns }}" \
-          -var="app_port=${APP_PORT}"
+          -var="nlb_listener_arn=${{ steps.nlb_listener.outputs.nlb_listener_arn }}"
 
     # ----------------------------
     # Get API Gateway URL
@@ -151,12 +146,12 @@ jobs:
     - name: Get API Gateway URL
       id: api
       run: |
-        API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url | tr -d '\r\n' | xargs)
+        API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url | tr -d '\r\n')
         echo "api_url=$API_URL" >> $GITHUB_OUTPUT
         echo "✅ API Gateway URL: $API_URL"
 
     # ----------------------------
-    # Install Argo CD (HTTP, /argo)
+    # Install Argo CD (values.yaml)
     # ----------------------------
     - name: Install Argo CD
       run: |
@@ -164,14 +159,41 @@ jobs:
           -n $NAMESPACE \
           --wait \
           --timeout 15m \
-          --set server.service.type=ClusterIP \
-          --set server.ingress.enabled=true \
-          --set server.ingress.ingressClassName=nginx \
-          --set server.ingress.hosts[0].host="argocd.example.com" \
-          --set server.ingress.hosts[0].paths[0].path="/argo" \
-          --set server.ingress.hosts[0].paths[0].pathType=Prefix \
-          --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"="/\$2" \
-          --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/ssl-redirect"="false"
+          -f k8s/argocd/values.yaml
+
+    # ----------------------------
+    # Health Check (Argo CD)
+    # ----------------------------
+    - name: Argo CD Health Check
+      run: |
+        echo "Checking Argo CD readiness..."
+        for i in {1..20}; do
+          STATUS=$(kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=argocd-server \
+            -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
+          if [ "$STATUS" == "Running" ]; then
+            echo "✅ Argo CD Server is Running"
+            exit 0
+          fi
+          echo "⏳ Waiting for Argo CD Server..."
+          sleep 15
+        done
+        echo "❌ Argo CD Server failed to start"
+        kubectl describe pods -n $NAMESPACE -l app.kubernetes.io/name=argocd-server
+        exit 1
+
+    # ----------------------------
+    # Rollback-safe validation (Ingress)
+    # ----------------------------
+    - name: Validate Argo CD Ingress
+      run: |
+        NLB_HOST=$(kubectl get svc -n $NAMESPACE ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        echo "Testing Argo CD path..."
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$NLB_HOST/argo")
+        if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
+          echo "❌ Argo CD ingress test failed: HTTP $HTTP_STATUS"
+          exit 1
+        fi
+        echo "✅ Argo CD ingress test passed: HTTP $HTTP_STATUS"
 
     # ----------------------------
     # Show final URLs
@@ -179,11 +201,11 @@ jobs:
     - name: Show final URLs
       run: |
         echo "===================================="
-        echo "✅ API Gateway URL (APP):"
+        echo "✅ API Gateway URL:"
         echo "${{ steps.api.outputs.api_url }}"
         echo ""
-        echo "✅ Argo CD URL (HTTP):"
-        echo "http://${{ steps.nlb.outputs.nlb_dns }}/argo"
+        echo "➡ Argo CD URL:"
+        echo "http://$(kubectl get svc -n $NAMESPACE ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')/argo"
         echo "===================================="
 
 

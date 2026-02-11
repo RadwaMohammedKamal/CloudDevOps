@@ -22,11 +22,11 @@ variable "nlb_listener_arn" {
   type        = string
   default     = ""
 }
-variable "nlb_dns" {
-  description = "NLB DNS name for API integration"
-  type        = string
-  default     = ""
-}
+# variable "nlb_dns" {
+#   description = "NLB DNS name for API integration"
+#   type        = string
+#   default     = ""
+# }
 
 
 
@@ -42,7 +42,6 @@ variable "nlb_dns" {
 #   description = "Port used by the application"
 #   type        = number
 # }
-
 # variable "mongodb_uri" {
 #   description = "MongoDB connection string"
 #   type        = string

@@ -1,13 +1,18 @@
 server:
+  service:
+    type: ClusterIP
+
   ingress:
     enabled: true
     ingressClassName: nginx
-    hosts: []   # فارغ لأنه مفيش DNS
+
     annotations:
+      nginx.ingress.kubernetes.io/use-regex: "true"
       nginx.ingress.kubernetes.io/rewrite-target: /$2
       nginx.ingress.kubernetes.io/ssl-redirect: "false"
-    paths:
-      - path: /argo(/|$)(.*)
-        pathType: Prefix
-  service:
-    type: ClusterIP
+
+    hosts:
+      - host: ""
+        paths:
+          - path: /argo(/|$)(.*)
+            pathType: Prefix
