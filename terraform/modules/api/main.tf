@@ -48,14 +48,32 @@ resource "aws_apigatewayv2_integration" "nlb_integration" {
 # ----------------------------
 # Route (Catch-all)
 # ----------------------------
-resource "aws_apigatewayv2_route" "api_route" {
+# resource "aws_apigatewayv2_route" "api_route" {
+#   api_id    = aws_apigatewayv2_api.http_api.id
+
+#   #  paths
+#   route_key = "ANY /{proxy+}"
+
+#   target = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
+# }
+resource "aws_apigatewayv2_route" "argo_route" {
   api_id    = aws_apigatewayv2_api.http_api.id
 
-  #  paths
-  route_key = "ANY /{proxy+}"
+  #  request   /argo
+  route_key = "ANY /argo/{proxy+}"
 
   target = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
 }
+
+resource "aws_apigatewayv2_route" "app_route" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+
+  #  request   /app
+  route_key = "ANY /app/{proxy+}"
+
+  target = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
+}
+
 # ----------------------------
 # Stage
 # ----------------------------
