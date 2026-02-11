@@ -110,24 +110,35 @@ jobs:
           --set controller.service.targetPorts.http=${APP_PORT}
 
     # ----------------------------
-    # Get NLB ARN & Listener ARN
+    # Wait for NLB and get Listener ARN
     # ----------------------------
     - name: Get NLB Listener ARN
       id: nlb_listener
       run: |
-        NLB_NAME="ingress-nginx-controller"
-        NLB_ARN=$(aws elbv2 describe-load-balancers --names $NLB_NAME \
-          --query "LoadBalancers[0].LoadBalancerArn" --output text)
+        echo "Waiting for ingress-nginx NLB to be ready..."
+        for i in {1..40}; do
+          SERVICE_NAME=$(kubectl get svc -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+          NLB_DNS=$(kubectl get svc -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+          if [ -n "$NLB_DNS" ]; then
+            echo "✅ NLB DNS ready: $NLB_DNS"
+            break
+          fi
+          echo "⏳ Waiting for NLB..."
+          sleep 15
+        done
+
+        NLB_ARN=$(aws elbv2 describe-load-balancers --names $SERVICE_NAME --query "LoadBalancers[0].LoadBalancerArn" --output text)
         if [ -z "$NLB_ARN" ]; then
           echo "❌ NLB ARN not found"
           exit 1
         fi
-        LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN \
-          --query "Listeners[0].ListenerArn" --output text)
+
+        LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --query "Listeners[0].ListenerArn" --output text)
         if [ -z "$LISTENER_ARN" ]; then
           echo "❌ NLB Listener ARN not found"
           exit 1
         fi
+
         echo "✅ NLB Listener ARN: $LISTENER_ARN"
         echo "nlb_listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
 
@@ -168,8 +179,7 @@ jobs:
       run: |
         echo "Checking Argo CD readiness..."
         for i in {1..20}; do
-          STATUS=$(kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=argocd-server \
-            -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
+          STATUS=$(kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=argocd-server -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
           if [ "$STATUS" == "Running" ]; then
             echo "✅ Argo CD Server is Running"
             exit 0
