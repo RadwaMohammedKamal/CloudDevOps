@@ -1,6 +1,3 @@
-
-
-
 name: EKS Full Deployment Pipeline Tool
 
 on:
@@ -113,15 +110,14 @@ jobs:
           --set controller.service.targetPorts.http=${APP_PORT}
 
     # ----------------------------
-    # Get NLB DNS and Listener ARN
+    # Get NLB DNS, ARN, and Listener ARN
     # ----------------------------
-    - name: Get NLB DNS and Listener ARN
+    - name: Get NLB and Listener ARN
       id: nlb
       run: |
         echo "Waiting for ingress-nginx NLB to be ready..."
-        SERVICE_NAME=$(kubectl get svc -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].metadata.name}')
-        NLB_DNS=""
         for i in {1..40}; do
+          SERVICE_NAME=$(kubectl get svc -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           NLB_DNS=$(kubectl get svc -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
           if [ -n "$NLB_DNS" ]; then
             echo "✅ NLB DNS ready: $NLB_DNS"
@@ -136,6 +132,7 @@ jobs:
           exit 1
         fi
 
+        # Use exact Service name as LoadBalancer name
         NLB_ARN=$(aws elbv2 describe-load-balancers --names $SERVICE_NAME --region $AWS_REGION --query "LoadBalancers[0].LoadBalancerArn" --output text)
         if [ -z "$NLB_ARN" ]; then
           echo "❌ NLB ARN not found"
