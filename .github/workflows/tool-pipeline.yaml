@@ -112,7 +112,7 @@ jobs:
     # ----------------------------
     # Get NLB DNS and Listener ARN
     # ----------------------------
-    - name: Get NLB and Listener ARN
+    - name: Get NLB DNS
       id: nlb
       run: |
         SERVICE_NAME="ingress-nginx-controller"
@@ -134,22 +134,6 @@ jobs:
           exit 1
         fi
 
-        # Extract LB Name from DNS
-        LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
-        NLB_ARN=$(aws elbv2 describe-load-balancers \
-          --names $LB_NAME \
-          --region $AWS_REGION \
-          --query 'LoadBalancers[0].LoadBalancerArn' \
-          --output text)
-        echo "NLB_ARN=$NLB_ARN"
-
-        LISTENER_ARN=$(aws elbv2 describe-listeners \
-          --load-balancer-arn $NLB_ARN \
-          --region $AWS_REGION \
-          --query 'Listeners[0].ListenerArn' \
-          --output text)
-        echo "listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
-        echo "✅ Listener ARN: $LISTENER_ARN"
         echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
 
     # ----------------------------
@@ -173,7 +157,7 @@ jobs:
         echo "✅ API Gateway URL: $API_URL"
 
     # ----------------------------
-    # Install Argo CD using values.yaml
+    # Install Argo CD (HTTP only, no TLS)
     # ----------------------------
     - name: Install Argo CD
       run: |
@@ -181,7 +165,13 @@ jobs:
           -n $NAMESPACE \
           --wait \
           --timeout 15m \
-          -f k8s/argocd/values.yaml
+          --set server.service.type=ClusterIP \
+          --set server.ingress.enabled=true \
+          --set server.ingress.ingressClassName=nginx \
+          --set server.ingress.paths[0].path="/argo(/|$)(.*)" \
+          --set server.ingress.paths[0].pathType=Prefix \
+          --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"="/\$2" \
+          --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/ssl-redirect"="false"
 
     # ----------------------------
     # Show final URLs
@@ -192,9 +182,10 @@ jobs:
         echo "✅ API Gateway URL (APP):"
         echo "${{ steps.api.outputs.api_url }}"
         echo ""
-        echo "✅ Argo CD URL:"
-        echo "https://argocd.example.com/argo"
+        echo "✅ Argo CD URL (HTTP only):"
+        echo "http://${{ steps.nlb.outputs.nlb_dns }}/argo"
         echo "===================================="
+
 
 
 
