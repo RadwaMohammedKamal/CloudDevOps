@@ -23,9 +23,15 @@ jobs:
       APP_PORT: 80
 
     steps:
+    # ----------------------------
+    # Checkout repo
+    # ----------------------------
     - name: Checkout repo
       uses: actions/checkout@v3
 
+    # ----------------------------
+    # Install tools
+    # ----------------------------
     - name: Install tools
       run: |
         set -e
@@ -41,8 +47,14 @@ jobs:
         curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
         helm version
 
+    # ----------------------------
+    # Setup Terraform
+    # ----------------------------
     - uses: hashicorp/setup-terraform@v2
 
+    # ----------------------------
+    # Configure AWS credentials
+    # ----------------------------
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -50,6 +62,9 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
+    # ----------------------------
+    # Terraform Init & Plan
+    # ----------------------------
     - name: Terraform Init
       run: terraform -chdir=${TF_DIR} init -input=false
 
@@ -64,16 +79,25 @@ jobs:
         aws eks update-kubeconfig --region $AWS_REGION --name "${ENV}-eks"
         kubectl wait --for=condition=Ready nodes --all --timeout=20m
 
+    # ----------------------------
+    # Ensure namespace
+    # ----------------------------
     - name: Ensure namespace
       run: |
         kubectl get ns $NAMESPACE || kubectl create ns $NAMESPACE
 
+    # ----------------------------
+    # Add Helm repos
+    # ----------------------------
     - name: Add Helm repos
       run: |
         helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
         helm repo add argo https://argoproj.github.io/argo-helm
         helm repo update
 
+    # ----------------------------
+    # Install ingress-nginx (NLB)
+    # ----------------------------
     - name: Install ingress-nginx
       run: |
         helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
@@ -91,21 +115,33 @@ jobs:
     - name: Get NLB and Listener ARN
       id: nlb
       run: |
-        SERVICE_NAME=$(kubectl get svc -n $NAMESPACE -o jsonpath='{.items[?(@.metadata.labels.app=="ingress-nginx")].metadata.name}')
-        echo "Service Name: $SERVICE_NAME"
+        SERVICE_NAME="ingress-nginx-controller"
 
-        NLB_DNS=$(kubectl get svc -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-        echo "NLB DNS: $NLB_DNS"
+        echo "Waiting for NLB DNS to be available..."
+        NLB_DNS=""
+        for i in {1..40}; do
+          NLB_DNS=$(kubectl get svc -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+          if [ -n "$NLB_DNS" ]; then
+            echo "✅ NLB DNS found: $NLB_DNS"
+            break
+          fi
+          echo "Waiting 15s..."
+          sleep 15
+        done
 
-        # Extract LB name from DNS
-        LB_NAME=$(basename $NLB_DNS .elb.eu-north-1.amazonaws.com)
+        if [ -z "$NLB_DNS" ]; then
+          echo "❌ NLB DNS not found after 10 min"
+          exit 1
+        fi
 
+        # Extract LB Name from DNS
+        LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
         NLB_ARN=$(aws elbv2 describe-load-balancers \
           --names $LB_NAME \
           --region $AWS_REGION \
           --query 'LoadBalancers[0].LoadBalancerArn' \
           --output text)
-        echo "NLB_ARN=$NLB_ARN" >> $GITHUB_OUTPUT
+        echo "NLB_ARN=$NLB_ARN"
 
         LISTENER_ARN=$(aws elbv2 describe-listeners \
           --load-balancer-arn $NLB_ARN \
@@ -114,6 +150,7 @@ jobs:
           --output text)
         echo "listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
         echo "✅ Listener ARN: $LISTENER_ARN"
+        echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
 
     # ----------------------------
     # Terraform Apply API integration
@@ -123,7 +160,6 @@ jobs:
         terraform -chdir=${TF_DIR} apply -auto-approve \
           -var-file=${ENV}.tfvars \
           -var="nlb_listener_arn=${{ steps.nlb.outputs.listener_arn }}" \
-          -var="integration_uri=http://${{ steps.nlb.outputs.NLB_DNS }}" \
           -var="app_port=${APP_PORT}"
 
     # ----------------------------
@@ -158,9 +194,13 @@ jobs:
     - name: Show final URLs
       run: |
         echo "===================================="
-        echo "✅ API Gateway URL (APP): ${{ steps.api.outputs.api_url }}"
-        echo "✅ Argo CD URL: https://${{ steps.nlb.outputs.NLB_DNS }}/argo"
+        echo "✅ API Gateway URL (APP):"
+        echo "${{ steps.api.outputs.api_url }}"
+        echo ""
+        echo "✅ Argo CD URL:"
+        echo "https://${{ steps.nlb.outputs.nlb_dns }}/argo"
         echo "===================================="
+
 
 
 
