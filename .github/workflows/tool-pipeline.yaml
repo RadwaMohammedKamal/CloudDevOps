@@ -130,8 +130,7 @@ jobs:
           echo "❌ NLB DNS not found"
           exit 1
         fi
-
-        NLB_ARN=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query "LoadBalancers[?DNSName=='$NLB_DNS'].LoadBalancerArn" --output text)
+        NLB_ARN=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query "LoadBalancers[?contains(DNSName, '$NLB_DNS')].LoadBalancerArn" --output text)
         if [ -z "$NLB_ARN" ]; then
           echo "❌ NLB ARN not found"
           exit 1
