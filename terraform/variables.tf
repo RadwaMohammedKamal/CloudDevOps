@@ -20,7 +20,7 @@ variable "integration_uri" {
 variable "nlb_listener_arn" {
   description = "NLB Listener ARN for API Gateway integration"
   type        = string
-  default     = ""  
+  default     = ""
 }
 
 

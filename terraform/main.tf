@@ -49,13 +49,12 @@ module "irsa" {
 }
 
 module "api" {
-  source             = "./modules/api"
-  environment        = var.environment
-  vpc_id             = module.vpc.vpc_id
-  private_subnets    = module.vpc.private_subnet_ids
-  tags               = var.tags
-  # integration_uri    = var.integration_uri
-  nlb_listener_arn   = var.nlb_listener_arn
+  source          = "./modules/api"
+  environment     = var.environment
+  vpc_id          = module.vpc.vpc_id
+  private_subnets = module.vpc.private_subnet_ids
+  tags            = var.tags
+  nlb_listener_arn = var.nlb_listener_arn 
 }
 
 

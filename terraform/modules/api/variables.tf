@@ -11,10 +11,12 @@ variable "integration_uri" {
   default     = ""
 }
 
-# variable "nlb_listener_arn" {
-#   description = "NLB Listener ARN for application"
-#   type        = string
-# }
+variable "nlb_listener_arn" {
+  description = "NLB Listener ARN for API Gateway integration"
+  type        = string
+  default     = ""
+}
+
 
 # variable "environment" { type = string }
 # variable "vpc_id" { type = string }
