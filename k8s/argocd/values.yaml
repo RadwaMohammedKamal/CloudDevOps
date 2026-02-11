@@ -1,5 +1,3 @@
-# k8s/argocd/values.yaml
-
 server:
   service:
     type: ClusterIP
@@ -21,8 +19,6 @@ server:
 
 configs:
   params:
-    
-    server.basehref: /argo
+    server.baseHref: /argo
     server.rootpath: /argo
- 
     server.insecure: true
