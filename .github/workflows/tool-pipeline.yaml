@@ -110,10 +110,10 @@ jobs:
           --set controller.service.targetPorts.http=${APP_PORT}
 
     # ----------------------------
-    # Wait for NLB and get Listener ARN
+    # Get NLB DNS, ARN, and Listener ARN
     # ----------------------------
-    - name: Get NLB Listener ARN
-      id: nlb_listener
+    - name: Get NLB and Listener ARN
+      id: nlb
       run: |
         echo "Waiting for ingress-nginx NLB to be ready..."
         for i in {1..40}; do
@@ -127,29 +127,37 @@ jobs:
           sleep 15
         done
 
-        NLB_ARN=$(aws elbv2 describe-load-balancers --names $SERVICE_NAME --query "LoadBalancers[0].LoadBalancerArn" --output text)
+        if [ -z "$NLB_DNS" ]; then
+          echo "❌ NLB DNS not found"
+          exit 1
+        fi
+
+        LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
+        NLB_ARN=$(aws elbv2 describe-load-balancers --names $LB_NAME --region $AWS_REGION --query "LoadBalancers[0].LoadBalancerArn" --output text)
         if [ -z "$NLB_ARN" ]; then
           echo "❌ NLB ARN not found"
           exit 1
         fi
 
-        LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --query "Listeners[0].ListenerArn" --output text)
+        LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query "Listeners[0].ListenerArn" --output text)
         if [ -z "$LISTENER_ARN" ]; then
           echo "❌ NLB Listener ARN not found"
           exit 1
         fi
 
         echo "✅ NLB Listener ARN: $LISTENER_ARN"
+        echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
         echo "nlb_listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
 
     # ----------------------------
-    # Terraform Apply (API Gateway → NLB Listener ARN)
+    # Terraform Apply API integration
     # ----------------------------
     - name: Terraform Apply API integration
       run: |
         terraform -chdir=${TF_DIR} apply -auto-approve \
           -var-file=${ENV}.tfvars \
-          -var="nlb_listener_arn=${{ steps.nlb_listener.outputs.nlb_listener_arn }}"
+          -var="nlb_listener_arn=${{ steps.nlb.outputs.nlb_listener_arn }}" \
+          -var="app_port=${APP_PORT}"
 
     # ----------------------------
     # Get API Gateway URL
@@ -196,7 +204,7 @@ jobs:
     # ----------------------------
     - name: Validate Argo CD Ingress
       run: |
-        NLB_HOST=$(kubectl get svc -n $NAMESPACE ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        NLB_HOST="${{ steps.nlb.outputs.nlb_dns }}"
         echo "Testing Argo CD path..."
         HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$NLB_HOST/argo")
         if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
@@ -215,8 +223,9 @@ jobs:
         echo "${{ steps.api.outputs.api_url }}"
         echo ""
         echo "➡ Argo CD URL:"
-        echo "http://$(kubectl get svc -n $NAMESPACE ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')/argo"
+        echo "http://${{ steps.nlb.outputs.nlb_dns }}/argo"
         echo "===================================="
+
 
 
 
