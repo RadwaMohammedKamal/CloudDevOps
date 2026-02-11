@@ -116,6 +116,7 @@ jobs:
       run: |
         echo "🚀 Starting NLB discovery process..."
         
+        # 1. الانتظار حتى يظهر الـ DNS في الـ Service
         for i in {1..40}; do
           NLB_DNS=$(kubectl get svc -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
           if [ -n "$NLB_DNS" ]; then
@@ -131,17 +132,18 @@ jobs:
           exit 1
         fi
 
-        # 2. الانتظار حتى يظهر الـ ARN في سجلات AWS (Retry Loop)
-        echo "🔍 Searching for NLB ARN in AWS using DNS..."
+        NLB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
+        echo "🔍 Searching for NLB ARN in AWS using Name prefix: $NLB_NAME"
+
         for i in {1..20}; do
-          NLB_ARN=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query "LoadBalancers[?contains(DNSName, '$NLB_DNS')].LoadBalancerArn" --output text)
+          NLB_ARN=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query "LoadBalancers[?starts_with(LoadBalancerName, '$NLB_NAME')].LoadBalancerArn" --output text)
           
           if [ -n "$NLB_ARN" ] && [ "$NLB_ARN" != "None" ]; then
             NLB_ARN=$(echo $NLB_ARN | awk '{print $1}')
             echo "✅ NLB ARN found: $NLB_ARN"
             break
           fi
-          echo "⏳ ARN not visible in AWS yet, retrying in 10s... ($i/20)"
+          echo "⏳ NLB not found in AWS lists yet, retrying... ($i/20)"
           sleep 10
         done
 
@@ -150,7 +152,6 @@ jobs:
           exit 1
         fi
 
-      
         echo "🔍 Fetching Listener ARN..."
         LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query "Listeners[0].ListenerArn" --output text)
         
@@ -161,7 +162,6 @@ jobs:
 
         echo "✅ NLB Listener ARN: $LISTENER_ARN"
         
-      
         echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
         echo "nlb_listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
 
