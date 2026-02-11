@@ -110,14 +110,15 @@ jobs:
           --set controller.service.targetPorts.http=${APP_PORT}
 
     # ----------------------------
-    # Get NLB DNS, ARN, and Listener ARN
+    # Get NLB DNS and Listener ARN
     # ----------------------------
-    - name: Get NLB and Listener ARN
+    - name: Get NLB DNS and Listener ARN
       id: nlb
       run: |
         echo "Waiting for ingress-nginx NLB to be ready..."
+        SERVICE_NAME=$(kubectl get svc -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].metadata.name}')
+        NLB_DNS=""
         for i in {1..40}; do
-          SERVICE_NAME=$(kubectl get svc -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           NLB_DNS=$(kubectl get svc -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
           if [ -n "$NLB_DNS" ]; then
             echo "✅ NLB DNS ready: $NLB_DNS"
@@ -132,8 +133,7 @@ jobs:
           exit 1
         fi
 
-        LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
-        NLB_ARN=$(aws elbv2 describe-load-balancers --names $LB_NAME --region $AWS_REGION --query "LoadBalancers[0].LoadBalancerArn" --output text)
+        NLB_ARN=$(aws elbv2 describe-load-balancers --names $SERVICE_NAME --region $AWS_REGION --query "LoadBalancers[0].LoadBalancerArn" --output text)
         if [ -z "$NLB_ARN" ]; then
           echo "❌ NLB ARN not found"
           exit 1
@@ -150,7 +150,7 @@ jobs:
         echo "nlb_listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
 
     # ----------------------------
-    # Terraform Apply API integration
+    # Terraform Apply API integration (VPC_LINK → NLB Listener ARN)
     # ----------------------------
     - name: Terraform Apply API integration
       run: |
@@ -181,34 +181,31 @@ jobs:
           -f k8s/argocd/values.yaml
 
     # ----------------------------
-    # Health Check (Argo CD)
+    # Wait for Argo CD ingress resource ready
+    # ----------------------------
+    - name: Wait for Argo CD ingress
+      run: |
+        for i in {1..20}; do
+          INGRESS=$(kubectl get ingress -n $NAMESPACE -l app.kubernetes.io/name=argocd-server -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+          if [ -n "$INGRESS" ]; then
+            echo "✅ Argo CD Ingress ready: $INGRESS"
+            break
+          fi
+          echo "⏳ Waiting for Argo CD Ingress..."
+          sleep 15
+        done
+
+    # ----------------------------
+    # Health Check (Argo CD /argo)
     # ----------------------------
     - name: Argo CD Health Check
       run: |
-        echo "Checking Argo CD readiness..."
-        for i in {1..20}; do
-          STATUS=$(kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=argocd-server -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
-          if [ "$STATUS" == "Running" ]; then
-            echo "✅ Argo CD Server is Running"
-            exit 0
-          fi
-          echo "⏳ Waiting for Argo CD Server..."
-          sleep 15
-        done
-        echo "❌ Argo CD Server failed to start"
-        kubectl describe pods -n $NAMESPACE -l app.kubernetes.io/name=argocd-server
-        exit 1
-
-    # ----------------------------
-    # Rollback-safe validation (Ingress)
-    # ----------------------------
-    - name: Validate Argo CD Ingress
-      run: |
         NLB_HOST="${{ steps.nlb.outputs.nlb_dns }}"
-        echo "Testing Argo CD path..."
+        echo "Testing Argo CD path /argo..."
         HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$NLB_HOST/argo")
         if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
           echo "❌ Argo CD ingress test failed: HTTP $HTTP_STATUS"
+          kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=argocd-server
           exit 1
         fi
         echo "✅ Argo CD ingress test passed: HTTP $HTTP_STATUS"
@@ -225,6 +222,7 @@ jobs:
         echo "➡ Argo CD URL:"
         echo "http://${{ steps.nlb.outputs.nlb_dns }}/argo"
         echo "===================================="
+
 
 
 

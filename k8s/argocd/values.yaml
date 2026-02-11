@@ -12,7 +12,7 @@ server:
       nginx.ingress.kubernetes.io/ssl-redirect: "false"
 
     hosts:
-      - host: ""
+      - host: "*"
         paths:
           - path: /argo(/|$)(.*)
             pathType: Prefix
