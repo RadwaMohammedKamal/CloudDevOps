@@ -131,8 +131,7 @@ jobs:
           exit 1
         fi
 
-        LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
-        NLB_ARN=$(aws elbv2 describe-load-balancers --names $LB_NAME --region $AWS_REGION --query "LoadBalancers[0].LoadBalancerArn" --output text)
+        NLB_ARN=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query "LoadBalancers[?DNSName=='$NLB_DNS'].LoadBalancerArn" --output text)
         if [ -z "$NLB_ARN" ]; then
           echo "❌ NLB ARN not found"
           exit 1
@@ -215,11 +214,11 @@ jobs:
         NLB_HOST="${{ steps.nlb.outputs.nlb_dns }}"
           
         echo "1. Testing via NLB..."
-        # زودنا / بعد argo
+        
         curl -s -I "http://$NLB_HOST/argo/" | grep "HTTP"
           
         echo "2. Testing via API Gateway..."
-        # زودنا / بعد argo هنا كمان
+        
         HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_GATEWAY_URL/argo/")
         
         if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
