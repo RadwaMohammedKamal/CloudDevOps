@@ -34,26 +34,16 @@ resource "aws_apigatewayv2_api" "http_api" {
 }
 
 # ----------------------------
-# NLB Integration (APP )
-# integration_uri = NLB LISTENER ARN
+# NLB Integration (APP) using NLB DNS
 # ----------------------------
 resource "aws_apigatewayv2_integration" "nlb_integration" {
   api_id                 = aws_apigatewayv2_api.http_api.id
   integration_type       = "HTTP_PROXY"
   integration_method     = "ANY"
-  integration_uri        = var.nlb_listener_arn
+  integration_uri        = "http://${var.nlb_dns}:${80}/"
   connection_type        = "VPC_LINK"
   connection_id          = aws_apigatewayv2_vpc_link.vpc_link.id
   payload_format_version = "1.0"
-}
-
-# ----------------------------
-# Route /app
-# ----------------------------
-resource "aws_apigatewayv2_route" "app_route" {
-  api_id    = aws_apigatewayv2_api.http_api.id
-  route_key = "ANY /app/{proxy+}"
-  target    = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
 }
 
 # ----------------------------
@@ -64,6 +54,16 @@ resource "aws_apigatewayv2_stage" "default_stage" {
   name        = "$default"
   auto_deploy = true
 }
+# # ----------------------------
+# # Route /app
+# # ----------------------------
+# resource "aws_apigatewayv2_route" "app_route" {
+#   api_id    = aws_apigatewayv2_api.http_api.id
+#   route_key = "ANY /app/{proxy+}"
+#   target    = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
+# }
+
+
 
 
 
