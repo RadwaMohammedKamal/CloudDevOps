@@ -116,18 +116,48 @@ jobs:
       id: nlb
       run: |
         SERVICE_NAME="ingress-nginx-controller"
-        echo "Waiting for NLB DNS..."
+
+        echo "Waiting for NLB DNS to be available..."
+        NLB_DNS=""
         for i in {1..40}; do
           NLB_DNS=$(kubectl get svc -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
-          [ -n "$NLB_DNS" ] && break
+          if [ -n "$NLB_DNS" ]; then
+            echo "✅ NLB DNS found: $NLB_DNS"
+            break
+          fi
+          echo "Waiting 15s..."
           sleep 15
         done
+
         if [ -z "$NLB_DNS" ]; then
-          echo "❌ NLB DNS not found"; exit 1
+          echo "❌ NLB DNS not found after 10 min"
+          exit 1
         fi
+
         LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
-        NLB_ARN=$(aws elbv2 describe-load-balancers --names $LB_NAME --region $AWS_REGION --query 'LoadBalancers[0].LoadBalancerArn' --output text)
-        LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query 'Listeners[0].ListenerArn' --output text)
+        NLB_ARN=$(aws elbv2 describe-load-balancers \
+          --names $LB_NAME \
+          --region $AWS_REGION \
+          --query 'LoadBalancers[0].LoadBalancerArn' \
+          --output text)
+
+        # Listener 
+        LISTENER_ARN=""
+        for i in {1..20}; do
+          LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query 'Listeners[0].ListenerArn' --output text || echo "")
+          if [ -n "$LISTENER_ARN" ]; then
+            echo "✅ Listener ARN found: $LISTENER_ARN"
+            break
+          fi
+          echo "Waiting 15s for listener..."
+          sleep 15
+        done
+
+        if [ -z "$LISTENER_ARN" ]; then
+          echo "❌ Listener ARN not found!"
+          exit 1
+        fi
+
         echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
         echo "listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
 
@@ -163,10 +193,10 @@ jobs:
           --set server.ingress.enabled=true \
           --set server.ingress.ingressClassName=nginx \
           --set server.ingress.paths[0].path="/argo(/|$)(.*)" \
-          --set server.ingress.paths[0].pathType=ImplementationSpecific \
-          --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"="/$2" \
-          --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/use-regex"="true" \
-          --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/ssl-redirect"="false"
+          --set server.ingress.paths[0].pathType=Prefix \
+          --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"="/\$2" \
+          --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/ssl-redirect"="false" \
+          --set server.ingress.hosts=[]
 
     # ----------------------------
     # Show final URLs
@@ -180,6 +210,7 @@ jobs:
         echo "✅ Argo CD URL (HTTP):"
         echo "http://${{ steps.nlb.outputs.nlb_dns }}/argo"
         echo "===================================="
+
 
 
 
