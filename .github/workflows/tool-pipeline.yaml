@@ -82,36 +82,47 @@ jobs:
           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
           --set controller.service.targetPorts.http=${APP_PORT}
 
-    - name: Wait for NLB and Listener
-      id: nlb_listener
+    - name: Get NLB DNS and Listener ARN
+      id: nlb
       run: |
+        echo "Waiting for NLB to be available..."
         for i in {1..20}; do
+          # نحصل على اسم الـ Service الذي أنشأه Helm
+          NLB_NAME=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.metadata.name}')
+          
+          # جلب NLB ARN
           NLB_ARN=$(aws elbv2 describe-load-balancers \
-            --names ingress-nginx-controller \
+            --names $NLB_NAME \
+            --region $AWS_REGION \
             --query 'LoadBalancers[0].LoadBalancerArn' \
             --output text 2>/dev/null || echo "")
+          
           if [ -n "$NLB_ARN" ]; then
+            # جلب Listener ARN
             LISTENER_ARN=$(aws elbv2 describe-listeners \
               --load-balancer-arn $NLB_ARN \
+              --region $AWS_REGION \
               --query 'Listeners[0].ListenerArn' \
               --output text 2>/dev/null || echo "")
             if [ -n "$LISTENER_ARN" ]; then
               echo "listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
+              echo "nlb_dns=$(aws elbv2 describe-load-balancers --load-balancer-arns $NLB_ARN --region $AWS_REGION --query 'LoadBalancers[0].DNSName' --output text)" >> $GITHUB_OUTPUT
               echo "✅ Listener ARN found: $LISTENER_ARN"
               exit 0
             fi
           fi
-          echo "Waiting 30s for NLB to be available..."
+          echo "Waiting 30s for NLB to be ready..."
           sleep 30
         done
-        echo "❌ NLB or Listener not found after 10 min"
+        echo "❌ NLB or Listener not found after 10 minutes"
         exit 1
 
     - name: Terraform Apply API integration
       run: |
         terraform -chdir=${TF_DIR} apply -auto-approve \
           -var-file=${ENV}.tfvars \
-          -var="nlb_listener_arn=${{ steps.nlb_listener.outputs.listener_arn }}" \
+          -var="nlb_listener_arn=${{ steps.nlb.outputs.listener_arn }}" \
+          -var="integration_uri=http://${{ steps.nlb.outputs.nlb_dns }}" \
           -var="app_port=${APP_PORT}"
 
     - name: Get API Gateway URL
@@ -137,12 +148,10 @@ jobs:
     - name: Show final URLs
       run: |
         echo "===================================="
-        echo "✅ API Gateway URL:"
-        echo "${{ steps.api.outputs.api_url }}"
-        echo ""
-        echo "✅ Argo CD URL:"
-        echo "https://${{ steps.nlb_listener.outputs.listener_arn }}/argo"
+        echo "✅ API Gateway URL (APP): ${{ steps.api.outputs.api_url }}"
+        echo "✅ Argo CD URL: https://${{ steps.nlb.outputs.nlb_dns }}/argo"
         echo "===================================="
+
 
 
 
