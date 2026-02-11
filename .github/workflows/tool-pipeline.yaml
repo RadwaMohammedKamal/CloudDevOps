@@ -1,3 +1,6 @@
+
+
+
 name: EKS Full Deployment Pipeline Tool
 
 on:
@@ -222,8 +225,6 @@ jobs:
         echo "➡ Argo CD URL:"
         echo "http://${{ steps.nlb.outputs.nlb_dns }}/argo"
         echo "===================================="
-
-
 
 
 
