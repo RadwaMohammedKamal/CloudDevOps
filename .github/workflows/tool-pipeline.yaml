@@ -110,9 +110,9 @@ jobs:
           --set controller.service.targetPorts.http=${APP_PORT}
 
     # ----------------------------
-    # Get NLB DNS and Listener ARN
+    # Get NLB DNS and Listener ARN (wait until ready)
     # ----------------------------
-    - name: Get NLB DNS
+    - name: Get NLB and Listener ARN
       id: nlb
       run: |
         SERVICE_NAME="ingress-nginx-controller"
@@ -134,7 +134,32 @@ jobs:
           exit 1
         fi
 
+        LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
+        NLB_ARN=$(aws elbv2 describe-load-balancers \
+          --names $LB_NAME \
+          --region $AWS_REGION \
+          --query 'LoadBalancers[0].LoadBalancerArn' \
+          --output text)
+
+        # Listener 
+        LISTENER_ARN=""
+        for i in {1..20}; do
+          LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query 'Listeners[0].ListenerArn' --output text || echo "")
+          if [ -n "$LISTENER_ARN" ]; then
+            echo "✅ Listener ARN found: $LISTENER_ARN"
+            break
+          fi
+          echo "Waiting 15s for listener..."
+          sleep 15
+        done
+
+        if [ -z "$LISTENER_ARN" ]; then
+          echo "❌ Listener ARN not found!"
+          exit 1
+        fi
+
         echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
+        echo "listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
 
     # ----------------------------
     # Terraform Apply API integration
@@ -154,10 +179,9 @@ jobs:
       run: |
         API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url | tr -d '\r\n' | xargs)
         echo "api_url=$API_URL" >> $GITHUB_OUTPUT
-        echo "✅ API Gateway URL: $API_URL"
 
     # ----------------------------
-    # Install Argo CD (HTTP only, no TLS)
+    # Install Argo CD (HTTP, /argo)
     # ----------------------------
     - name: Install Argo CD
       run: |
@@ -182,9 +206,10 @@ jobs:
         echo "✅ API Gateway URL (APP):"
         echo "${{ steps.api.outputs.api_url }}"
         echo ""
-        echo "✅ Argo CD URL (HTTP only):"
+        echo "✅ Argo CD URL (HTTP):"
         echo "http://${{ steps.nlb.outputs.nlb_dns }}/argo"
         echo "===================================="
+
 
 
 
