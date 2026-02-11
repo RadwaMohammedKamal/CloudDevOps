@@ -168,33 +168,7 @@ jobs:
         echo "api_url=$API_URL" >> $GITHUB_OUTPUT
         echo "✅ API Gateway URL: $API_URL"
 
-    # ----------------------------
-    # Check API Gateway routes
-    # ----------------------------
-    - name: Check API Gateway routes
-      run: |
-        echo "Checking /argo and /app routes..."
-        aws apigatewayv2 get-routes --api-id $(terraform -chdir=${TF_DIR} output -raw api_gateway_id) --region $AWS_REGION
-
-
-    # ----------------------------
-    # Check NLB target health
-    # ----------------------------
-    - name: Check NLB Target Health
-      run: |
-        NLB_ARN=$(aws elbv2 describe-load-balancers --names $(echo ${{ steps.nlb.outputs.nlb_dns }} | cut -d'-' -f1) --region $AWS_REGION --query "LoadBalancers[0].LoadBalancerArn" --output text)
-        TARGET_GROUP_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query "Listeners[0].DefaultActions[0].TargetGroupArn" --output text)
-        aws elbv2 describe-target-health --target-group-arn $TARGET_GROUP_ARN --region $AWS_REGION
-
-
-    # ----------------------------
-    # Check Ingress
-    # ----------------------------
-    - name: Check Ingress
-      run: |
-        kubectl get ingress -n $NAMESPACE -o wide
-        kubectl get svc -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx -o wide
-
+   
     # ----------------------------
     # Delete old Argo CD ingress if exists
     # ----------------------------
