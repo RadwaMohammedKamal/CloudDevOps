@@ -169,6 +169,18 @@ jobs:
         echo "✅ API Gateway URL: $API_URL"
 
     # ----------------------------
+    # Delete old Argo CD ingress if exists
+    # ----------------------------
+    - name: Delete old Argo CD ingress if exists
+      run: |
+        if kubectl get ingress -n $NAMESPACE -l app.kubernetes.io/name=argocd-server >/dev/null 2>&1; then
+          echo "🗑️ Deleting old Argo CD ingress..."
+          kubectl delete ingress -n $NAMESPACE -l app.kubernetes.io/name=argocd-server
+        else
+          echo "✅ No old Argo CD ingress found"
+        fi
+
+    # ----------------------------
     # Install Argo CD (values.yaml)
     # ----------------------------
     - name: Install Argo CD
