@@ -1,0 +1,13 @@
+server:
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - host: argocd.example.com
+        paths:
+          - path: /argo
+            pathType: Prefix
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+  service:
+    type: ClusterIP

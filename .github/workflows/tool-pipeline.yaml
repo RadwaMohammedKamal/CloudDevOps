@@ -173,7 +173,7 @@ jobs:
         echo "✅ API Gateway URL: $API_URL"
 
     # ----------------------------
-    # Install Argo CD
+    # Install Argo CD using values.yaml
     # ----------------------------
     - name: Install Argo CD
       run: |
@@ -181,12 +181,7 @@ jobs:
           -n $NAMESPACE \
           --wait \
           --timeout 15m \
-          --set server.service.type=ClusterIP \
-          --set server.ingress.enabled=true \
-          --set server.ingress.ingressClassName=nginx \
-          --set server.ingress.paths[0].path="/argo(/|$)(.*)" \
-          --set server.ingress.paths[0].pathType=Prefix \
-          --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"="/\$2"
+          -f k8s/argocd/values.yaml
 
     # ----------------------------
     # Show final URLs
@@ -198,8 +193,9 @@ jobs:
         echo "${{ steps.api.outputs.api_url }}"
         echo ""
         echo "✅ Argo CD URL:"
-        echo "https://${{ steps.nlb.outputs.nlb_dns }}/argo"
+        echo "https://argocd.example.com/argo"
         echo "===================================="
+
 
 
 
