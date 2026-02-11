@@ -114,56 +114,54 @@ jobs:
     - name: Get NLB and Listener ARN
       id: nlb
       run: |
-        echo "🚀 Starting NLB discovery process..."
-        
-        # 1. الانتظار حتى يظهر الـ DNS في الـ Service
+        SERVICE_NAME="ingress-nginx-controller"
+
+        echo "Waiting for NLB DNS to be available..."
+        NLB_DNS=""
         for i in {1..40}; do
-          NLB_DNS=$(kubectl get svc -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+          NLB_DNS=$(kubectl get svc -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
           if [ -n "$NLB_DNS" ]; then
-            echo "✅ NLB DNS ready: $NLB_DNS"
+            echo "✅ NLB DNS found: $NLB_DNS"
             break
           fi
-          echo "⏳ Waiting for NLB DNS to be assigned by AWS... ($i/40)"
+          echo "Waiting 15s... ($i/40)"
           sleep 15
         done
 
         if [ -z "$NLB_DNS" ]; then
-          echo "❌ Error: NLB DNS not found after timeout."
+          echo "❌ NLB DNS not found after timeout"
           exit 1
         fi
 
-        NLB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
-        echo "🔍 Searching for NLB ARN in AWS using Name prefix: $NLB_NAME"
+        # استخراج اسم الـ LB للبحث عنه في AWS
+        LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
+        echo "🔍 Searching for ARN for Load Balancer: $LB_NAME"
+        
+        NLB_ARN=$(aws elbv2 describe-load-balancers \
+          --names $LB_NAME \
+          --region $AWS_REGION \
+          --query 'LoadBalancers[0].LoadBalancerArn' \
+          --output text)
 
+        LISTENER_ARN=""
+        echo "🔍 Fetching Listener ARN..."
         for i in {1..20}; do
-          NLB_ARN=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query "LoadBalancers[?starts_with(LoadBalancerName, '$NLB_NAME')].LoadBalancerArn" --output text)
-          
-          if [ -n "$NLB_ARN" ] && [ "$NLB_ARN" != "None" ]; then
-            NLB_ARN=$(echo $NLB_ARN | awk '{print $1}')
-            echo "✅ NLB ARN found: $NLB_ARN"
+          LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query 'Listeners[0].ListenerArn' --output text || echo "")
+          if [ -n "$LISTENER_ARN" ] && [ "$LISTENER_ARN" != "None" ]; then
+            echo "✅ Listener ARN found: $LISTENER_ARN"
             break
           fi
-          echo "⏳ NLB not found in AWS lists yet, retrying... ($i/20)"
-          sleep 10
+          echo "Waiting 15s for listener... ($i/20)"
+          sleep 15
         done
 
-        if [ -z "$NLB_ARN" ] || [ "$NLB_ARN" == "None" ]; then
-          echo "❌ Error: NLB ARN could not be retrieved from AWS."
-          exit 1
-        fi
-
-        echo "🔍 Fetching Listener ARN..."
-        LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query "Listeners[0].ListenerArn" --output text)
-        
         if [ -z "$LISTENER_ARN" ] || [ "$LISTENER_ARN" == "None" ]; then
-          echo "❌ Error: NLB Listener ARN not found."
+          echo "❌ Listener ARN not found!"
           exit 1
         fi
 
-        echo "✅ NLB Listener ARN: $LISTENER_ARN"
-        
         echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
-        echo "nlb_listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
+        echo "listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
 
     # ----------------------------
     # Terraform Apply API integration (VPC_LINK → NLB Listener ARN)
@@ -236,7 +234,7 @@ jobs:
         curl -s -I "http://$NLB_HOST/argo/" | grep "HTTP"
           
         echo "2. Testing via API Gateway..."
-        
+        # زودنا / بعد argo هنا كمان
         HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_GATEWAY_URL/argo/")
         
         if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
@@ -276,10 +274,9 @@ jobs:
 #           echo "❌ NLB DNS not found"
 #           exit 1
 #         fi
-#         echo "🔍 Searching for NLB ARN using DNS: $NLB_DNS"
-        
-#         NLB_ARN=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query "LoadBalancers[?contains(DNSName, '$NLB_DNS')].LoadBalancerArn" --output text)
-#         NLB_ARN=$(echo $NLB_ARN | awk '{print $1}')
+
+#         LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
+#         NLB_ARN=$(aws elbv2 describe-load-balancers --names $LB_NAME --region $AWS_REGION --query "LoadBalancers[0].LoadBalancerArn" --output text)
 #         if [ -z "$NLB_ARN" ]; then
 #           echo "❌ NLB ARN not found"
 #           exit 1
@@ -294,7 +291,6 @@ jobs:
 #         echo "✅ NLB Listener ARN: $LISTENER_ARN"
 #         echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
 #         echo "nlb_listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
-
 
 # name: EKS Full Deployment Pipeline Tool
 
