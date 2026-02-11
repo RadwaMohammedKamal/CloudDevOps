@@ -5,12 +5,10 @@ server:
   ingress:
     enabled: true
     ingressClassName: nginx
-
     annotations:
       nginx.ingress.kubernetes.io/use-regex: "true"
       nginx.ingress.kubernetes.io/rewrite-target: /$2
       nginx.ingress.kubernetes.io/ssl-redirect: "false"
-
     hosts:
       - host: "*"
         paths:
@@ -19,6 +17,6 @@ server:
 
 configs:
   params:
-    server.baseHref: /argo
-    server.rootpath: /argo
+    server.baseHref: /
+    server.rootpath: /
     server.insecure: true
