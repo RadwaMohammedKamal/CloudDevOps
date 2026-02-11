@@ -9,11 +9,13 @@ server:
       nginx.ingress.kubernetes.io/ssl-redirect: "false"
       nginx.ingress.kubernetes.io/proxy-body-size: "0"
       nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+      nginx.ingress.kubernetes.io/x-forwarded-prefix: /argo
     hosts:
       - host: "*"
         paths:
-          - path: /argo
-            pathType: Prefix
+          - path: /argo(/|$)(.*)
+            pathType: ImplementationSpecific
 
 configs:
   params:
