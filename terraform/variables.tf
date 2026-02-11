@@ -22,6 +22,12 @@ variable "nlb_listener_arn" {
   type        = string
   default     = ""
 }
+variable "nlb_dns" {
+  description = "NLB DNS name for API integration"
+  type        = string
+  default     = ""
+}
+
 
 
 # variable "region" { type = string }
