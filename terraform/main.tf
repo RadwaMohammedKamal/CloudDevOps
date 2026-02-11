@@ -54,8 +54,8 @@ module "api" {
   vpc_id          = module.vpc.vpc_id
   private_subnets = module.vpc.private_subnet_ids
   tags            = var.tags
-  #  nlb_listener_arn = var.nlb_listener_arn 
-  nlb_dns         = var.nlb_dns
+  nlb_listener_arn = var.nlb_listener_arn 
+  # nlb_dns         = var.nlb_dns
 }
 
 
