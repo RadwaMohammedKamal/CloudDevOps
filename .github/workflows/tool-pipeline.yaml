@@ -215,10 +215,13 @@ jobs:
         NLB_HOST="${{ steps.nlb.outputs.nlb_dns }}"
           
         echo "1. Testing via NLB..."
-        curl -s -I "http://$NLB_HOST/argo" | grep "HTTP"
+        # زودنا / بعد argo
+        curl -s -I "http://$NLB_HOST/argo/" | grep "HTTP"
           
         echo "2. Testing via API Gateway..."
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_GATEWAY_URL/argo")
+        # زودنا / بعد argo هنا كمان
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_GATEWAY_URL/argo/")
+        
         if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
           echo "❌ Flow failed at API Gateway: HTTP $HTTP_STATUS"
           exit 1
