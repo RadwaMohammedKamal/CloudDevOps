@@ -56,22 +56,24 @@ resource "aws_apigatewayv2_integration" "nlb_integration" {
 
 #   target = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
 # }
-resource "aws_apigatewayv2_route" "argo_route" {
+# Route /argo/login  /argo/anything
+resource "aws_apigatewayv2_route" "argo_proxy_route" {
   api_id    = aws_apigatewayv2_api.http_api.id
-
-  #  request   /argo
   route_key = "ANY /argo/{proxy+}"
-
-  target = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
+  target    = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
 }
 
+# Route /argo 
+resource "aws_apigatewayv2_route" "argo_base_route" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "ANY /argo"
+  target    = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
+}
+#  App 
 resource "aws_apigatewayv2_route" "app_route" {
   api_id    = aws_apigatewayv2_api.http_api.id
-
-  #  request   /app
   route_key = "ANY /app/{proxy+}"
-
-  target = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
+  target    = "integrations/${aws_apigatewayv2_integration.nlb_integration.id}"
 }
 
 # ----------------------------

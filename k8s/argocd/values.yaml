@@ -6,17 +6,17 @@ server:
     enabled: true
     ingressClassName: nginx
     annotations:
-      nginx.ingress.kubernetes.io/use-regex: "true"
-      nginx.ingress.kubernetes.io/rewrite-target: /$2
       nginx.ingress.kubernetes.io/ssl-redirect: "false"
+      nginx.ingress.kubernetes.io/proxy-body-size: "0"
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
     hosts:
       - host: "*"
         paths:
-          - path: /argo(/|$)(.*)
+          - path: /argo
             pathType: Prefix
 
 configs:
   params:
-    server.baseHref: /
-    server.rootpath: /
+    server.baseHref: /argo/
+    server.rootpath: /argo
     server.insecure: true

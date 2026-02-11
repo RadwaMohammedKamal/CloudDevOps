@@ -191,7 +191,6 @@ jobs:
           --wait \
           --timeout 15m \
           -f k8s/argocd/values.yaml
-
     # ----------------------------
     # Wait for Argo CD ingress resource ready
     # ----------------------------
@@ -210,17 +209,21 @@ jobs:
     # ----------------------------
     # Health Check (Argo CD /argo)
     # ----------------------------
-    - name: Argo CD Health Check
+    - name: Final Health Check
       run: |
+        API_GATEWAY_URL="${{ steps.api.outputs.api_url }}"
         NLB_HOST="${{ steps.nlb.outputs.nlb_dns }}"
-        echo "Testing Argo CD path /argo..."
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$NLB_HOST/argo")
+          
+        echo "1. Testing via NLB..."
+        curl -s -I "http://$NLB_HOST/argo" | grep "HTTP"
+          
+        echo "2. Testing via API Gateway..."
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_GATEWAY_URL/argo")
         if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
-          echo "❌ Argo CD ingress test failed: HTTP $HTTP_STATUS"
-          kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=argocd-server
+          echo "❌ Flow failed at API Gateway: HTTP $HTTP_STATUS"
           exit 1
         fi
-        echo "✅ Argo CD ingress test passed: HTTP $HTTP_STATUS"
+        echo "✅ Everything is 100% working!"
 
     # ----------------------------
     # Show final URLs
@@ -228,11 +231,8 @@ jobs:
     - name: Show final URLs
       run: |
         echo "===================================="
-        echo "✅ API Gateway URL:"
-        echo "${{ steps.api.outputs.api_url }}"
-        echo ""
-        echo "➡ Argo CD URL:"
-        echo "http://${{ steps.nlb.outputs.nlb_dns }}/argo"
+        echo "✅ API Gateway URL: ${{ steps.api.outputs.api_url }}/argo"
+        echo "➡ Direct NLB URL: http://${{ steps.nlb.outputs.nlb_dns }}/argo"
         echo "===================================="
 
 
