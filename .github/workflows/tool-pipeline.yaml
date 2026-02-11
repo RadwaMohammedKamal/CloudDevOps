@@ -108,7 +108,6 @@ jobs:
           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
           --set controller.service.targetPorts.http=${APP_PORT}
-
     # ----------------------------
     # Get NLB DNS, ARN, and Listener ARN
     # ----------------------------
@@ -132,8 +131,8 @@ jobs:
           exit 1
         fi
 
-        # Use exact Service name as LoadBalancer name
-        NLB_ARN=$(aws elbv2 describe-load-balancers --names $SERVICE_NAME --region $AWS_REGION --query "LoadBalancers[0].LoadBalancerArn" --output text)
+        LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
+        NLB_ARN=$(aws elbv2 describe-load-balancers --names $LB_NAME --region $AWS_REGION --query "LoadBalancers[0].LoadBalancerArn" --output text)
         if [ -z "$NLB_ARN" ]; then
           echo "❌ NLB ARN not found"
           exit 1
