@@ -33,9 +33,11 @@ jobs:
         unzip -q awscliv2.zip
         sudo ./aws/install --update
         aws --version
+
         curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
         chmod +x kubectl && sudo mv kubectl /usr/local/bin/
         kubectl version --client
+
         curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
         helm version
 
@@ -51,11 +53,8 @@ jobs:
     - name: Terraform Init
       run: terraform -chdir=${TF_DIR} init -input=false
 
-    - name: Terraform Plan Infra Only
-      run: terraform -chdir=${TF_DIR} plan -var-file=${ENV}.tfvars -target=module.vpc -target=module.eks -target=module.iam -out=tfplan
-
-    - name: Terraform Apply Infra Only
-      run: terraform -chdir=${TF_DIR} apply -auto-approve tfplan
+    - name: Terraform Plan
+      run: terraform -chdir=${TF_DIR} plan -var-file=${ENV}.tfvars
 
     - name: Setup kubeconfig
       run: |
@@ -83,40 +82,37 @@ jobs:
           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
           --set controller.service.targetPorts.http=${APP_PORT}
 
-    - name: Get NLB Listener ARN
-      id: nlb
+    - name: Wait for NLB and Listener
+      id: nlb_listener
       run: |
-        echo "Waiting for NLB and Listener..."
         for i in {1..20}; do
-          NLB_NAME=$(kubectl get svc ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.metadata.name}')
-          if [ -n "$NLB_NAME" ]; then
-            NLB_ARN=$(aws elbv2 describe-load-balancers \
-              --names $NLB_NAME \
-              --query 'LoadBalancers[0].LoadBalancerArn' \
-              --output text)
-            if [ -n "$NLB_ARN" ]; then
-              LISTENER_ARN=$(aws elbv2 describe-listeners \
-                --load-balancer-arn $NLB_ARN \
-                --query 'Listeners[0].ListenerArn' \
-                --output text)
-              if [ -n "$LISTENER_ARN" ]; then
-                echo "listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
-                echo "✅ Listener ARN: $LISTENER_ARN"
-                exit 0
-              fi
+          NLB_ARN=$(aws elbv2 describe-load-balancers \
+            --names ingress-nginx-controller \
+            --query 'LoadBalancers[0].LoadBalancerArn' \
+            --output text 2>/dev/null || echo "")
+          if [ -n "$NLB_ARN" ]; then
+            LISTENER_ARN=$(aws elbv2 describe-listeners \
+              --load-balancer-arn $NLB_ARN \
+              --query 'Listeners[0].ListenerArn' \
+              --output text 2>/dev/null || echo "")
+            if [ -n "$LISTENER_ARN" ]; then
+              echo "listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
+              echo "✅ Listener ARN found: $LISTENER_ARN"
+              exit 0
             fi
           fi
+          echo "Waiting 30s for NLB to be available..."
           sleep 30
         done
-        echo "❌ Listener ARN not found"
+        echo "❌ NLB or Listener not found after 10 min"
         exit 1
 
     - name: Terraform Apply API integration
       run: |
         terraform -chdir=${TF_DIR} apply -auto-approve \
           -var-file=${ENV}.tfvars \
-          -var="nlb_listener_arn=${{ steps.nlb.outputs.listener_arn }}" \
-          -target=module.api
+          -var="nlb_listener_arn=${{ steps.nlb_listener.outputs.listener_arn }}" \
+          -var="app_port=${APP_PORT}"
 
     - name: Get API Gateway URL
       id: api
@@ -141,9 +137,13 @@ jobs:
     - name: Show final URLs
       run: |
         echo "===================================="
-        echo "✅ API Gateway URL (APP): ${{ steps.api.outputs.api_url }}"
-        echo "✅ Argo CD URL: https://${{ steps.nlb.outputs.listener_arn }}/argo"
+        echo "✅ API Gateway URL:"
+        echo "${{ steps.api.outputs.api_url }}"
+        echo ""
+        echo "✅ Argo CD URL:"
+        echo "https://${{ steps.nlb_listener.outputs.listener_arn }}/argo"
         echo "===================================="
+
 
 
 
