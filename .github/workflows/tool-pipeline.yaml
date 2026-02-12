@@ -20,7 +20,6 @@ jobs:
       ENV: ${{ github.event.inputs.env }}
       NAMESPACE: prod
       TF_DIR: terraform
-      APP_PORT: 80
 
     steps:
     # ----------------------------
@@ -96,21 +95,38 @@ jobs:
         helm repo update
 
     # ----------------------------
-    # Install ingress-nginx (NLB)
+    # Install ingress-nginx (Advanced Logic)
     # ----------------------------
     - name: Install ingress-nginx
       run: |
-        helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-          -n $NAMESPACE \
-          --wait \
-          --timeout 20m \
+        set -euo pipefail
+        
+        # Function to run on failure (Debug mode)
+        handle_error() {
+          echo "::error:: Nginx Ingress deployment failed!"
+          echo "Fetching debug logs..."
+          kubectl get all -n $NAMESPACE
+          kubectl describe pod -l app.kubernetes.io/name=ingress-nginx -n $NAMESPACE || true
+          kubectl logs -l app.kubernetes.io/name=ingress-nginx -n $NAMESPACE --all-containers --tail=100 || true
+          kubectl get events -n $NAMESPACE --sort-by='.lastTimestamp' || true
+        }
+        
+        # Set up trap to call handle_error on script failure
+        trap 'handle_error' ERR
+
+        echo "Installing Nginx Ingress Controller..."
+        # استخدمنا الـ Namespace بتاع البايبلاين بتاعتك والـ Logic بتاعه هو في الـ Upgrade
+        helm upgrade --install ingress-nginx ingress-nginx \
+          --repo https://kubernetes.github.io/ingress-nginx \
+          --namespace $NAMESPACE --create-namespace \
+          --version 4.11.3 \
           --set controller.service.type=LoadBalancer \
           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
-          --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
-          --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-scheme"="internet-facing" \
-          --set controller.service.targetPorts.http=${APP_PORT} \
-          --set controller.service.enableHttps=false \
-          --set controller.service.enableHttp=true
+          --set controller.admissionWebhooks.enabled=false \
+          --wait \
+          --timeout 15m \
+          --debug
+
     # ----------------------------
     # Get NLB DNS, ARN, and Listener ARN
     # ----------------------------
@@ -154,8 +170,7 @@ jobs:
       run: |
         terraform -chdir=${TF_DIR} apply -auto-approve \
           -var-file=${ENV}.tfvars \
-          -var="nlb_listener_arn=${{ steps.nlb.outputs.nlb_listener_arn }}" \
-          -var="app_port=${APP_PORT}"
+          -var="nlb_listener_arn=${{ steps.nlb.outputs.nlb_listener_arn }}"
 
     # ----------------------------
     # Get API Gateway URL
@@ -181,20 +196,135 @@ jobs:
         fi
 
     # ----------------------------
-    # Install Argo CD (values.yaml)
+    # Install Argo CD (مطابق تماماً للكود اللي بعتيه)
     # ----------------------------
     - name: Install Argo CD
       run: |
-        # اتأكدي إنك في المسار الصح
-        ls -R k8s/argocd/ # سطر للاطمئنان إن الملف موجود فعلاً قبل الرن
+        set -euo pipefail
         
-        helm upgrade --install argocd argo/argo-cd \
-          -n $NAMESPACE \
-          --wait \
-          --timeout 15m \
-          -f ./k8s/argocd/values.yaml \
-          --set server.ingress.enabled=true \
-          --set server.ingress.hosts[0]="demo.local"
+        # 1. جلب اسم الكلاستر من مخرجات تيريفورم
+        cd "${TF_DIR}"
+        CLUSTER_NAME=$(terraform output -raw cluster_name || echo "${ENV}-eks")
+        
+        # 2. تحديث Kubeconfig
+        echo "Updating Kubeconfig for $CLUSTER_NAME..."
+        aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
+        
+        # 3. Patch Kubeconfig (لضمان عمل الـ Auth بشكل سليم)
+        AWS_BIN=$(which aws)
+        sed -i "s|command: aws|command: $AWS_BIN|g" ~/.kube/config || true
+        
+        echo "Installing Argo CD..."
+        
+        # إنشاء ملف الإعدادات بنفس القيم بالظبط
+        cat <<'EOF' > argocd-ingress-values.yaml
+        redis-ha:
+          enabled: false
+        controller:
+          replicas: 1
+        server:
+          replicas: 1
+          service:
+            type: ClusterIP
+          ingress:
+            enabled: false
+          extraArgs:
+            - --insecure
+            - --rootpath=/argocd
+        repoServer:
+          replicas: 1
+        applicationController:
+          replicas: 1
+        EOF
+        
+        # نظام المحاولات (Until loop) - مطابق تماماً
+        n=0
+        until [ "$n" -ge 3 ]
+        do
+           helm upgrade --install argocd argo-cd \
+             --repo https://argoproj.github.io/argo-helm \
+             --namespace $NAMESPACE --create-namespace \
+             --wait --timeout 10m \
+             -f argocd-ingress-values.yaml && break
+           n=$((n+1))
+           echo "Deploy failed (attempt $n/3). Retrying in 10s..."
+           helm uninstall argocd -n $NAMESPACE || true
+           sleep 20
+        done
+        
+        if [ "$n" -eq 3 ]; then
+           echo "ArgoCD helm upgrade failed after 3 attempts."
+           exit 1
+        fi
+        
+        echo "Applying standalone ArgoCD Ingress..."
+        kubectl apply -f - <<'INGRESS_EOF'
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: argocd-server
+          namespace: ${{ env.NAMESPACE }}
+          annotations:
+            nginx.ingress.kubernetes.io/backend-protocol: HTTP
+        spec:
+          ingressClassName: nginx
+          rules:
+          - http:
+              paths:
+              - path: /argocd
+                pathType: Prefix
+                backend:
+                  service:
+                    name: argocd-server
+                    port:
+                      number: 80
+        INGRESS_EOF
+
+    # ----------------------------
+    # Install SonarQube (مطابق تماماً للكود اللي بعتيه)
+    # ----------------------------
+    - name: Install SonarQube
+      run: |
+        set -euo pipefail
+        
+        cd "${TF_DIR}"
+        CLUSTER_NAME=$(terraform output -raw cluster_name || echo "${ENV}-eks")
+        aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
+        
+        AWS_BIN=$(which aws)
+        sed -i "s|command: aws|command: $AWS_BIN|g" ~/.kube/config || true
+        
+        echo "Installing SonarQube..."
+        
+        cat > sonarqube-values.yaml <<EOF
+        monitoringPasscode: changeMe
+        community:
+          enabled: true
+        service:
+          type: ClusterIP
+        ingress:
+          enabled: true
+          ingressClassName: nginx
+          hosts:
+            - name: ""
+              path: "/sonarqube"
+          annotations:
+             nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+        sonarWebContext: /sonarqube
+        EOF
+
+        if ! helm upgrade --install sonarqube sonarqube \
+          --repo https://SonarSource.github.io/helm-chart-sonarqube \
+          --namespace $NAMESPACE --create-namespace \
+          --wait --timeout 15m \
+          -f sonarqube-values.yaml; then
+            echo "SonarQube installation failed. Debugging..."
+            kubectl get pods -n $NAMESPACE -l app=sonarqube
+            kubectl describe pods -n $NAMESPACE -l app=sonarqube
+            kubectl logs -n $NAMESPACE -l app=sonarqube --tail=100
+            exit 1
+        fi
+
     # ----------------------------
     # Wait for Argo CD ingress resource ready
     # ----------------------------
@@ -216,23 +346,20 @@ jobs:
     - name: Final Health Check
       run: |
         API_GATEWAY_URL="${{ steps.api.outputs.api_url }}"
-        NLB_HOST="${{ steps.nlb.outputs.nlb_dns }}"
-          
-        echo "1. Testing via NLB (with Host Header)..."
-        # ضفنا -H لتمثيل الدومين عشان الـ Ingress Nginx يوافق يمرر الطلب
-        curl -s -I -H "Host: demo.local" "http://$NLB_HOST/argo/" | grep "HTTP"
-          
-        echo "2. Testing via API Gateway..."
-        # هنا مش محتاجين Host Header لأن الـ API Gateway بيضيفه لوحده من الـ Terraform
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_GATEWAY_URL/argo/")
+        echo "Testing ArgoCD via API Gateway: $API_GATEWAY_URL/argocd/"
         
-        echo "📡 API Gateway Response: $HTTP_STATUS"
-        
-        if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
-          echo "❌ Flow failed at API Gateway: HTTP $HTTP_STATUS"
-          exit 1
-        fi
-        echo "✅ Everything is 100% working!"
+        # بنجرب كذا مرة عشان لو الـ API Gateway لسه بيحدث الـ Cache
+        for i in {1..5}; do
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_GATEWAY_URL/argocd/")
+          echo "Attempt $i: Response $HTTP_STATUS"
+          if [[ "$HTTP_STATUS" == "200" || "$HTTP_STATUS" == "302" ]]; then
+            echo "✅ ArgoCD is reachable!"
+            exit 0
+          fi
+          sleep 10
+        done
+        echo "❌ ArgoCD is NOT reachable after 5 attempts."
+        exit 1
     # ----------------------------
     # Show final URLs
     # ----------------------------
@@ -240,9 +367,8 @@ jobs:
       run: |
         echo "===================================================="
         echo "🚀 Deployment Complete!"
-        echo "✅ API Gateway URL: ${{ steps.api.outputs.api_url }}/argo/"
-        echo "🔗 Internal NLB DNS: http://${{ steps.nlb.outputs.nlb_dns }}/argo/"
-        echo "🏠 Host Header expected: demo.local"
+        echo "✅ ArgoCD URL: ${{ steps.api.outputs.api_url }}/argocd/"
+        echo "✅ SonarQube URL: ${{ steps.api.outputs.api_url }}/sonarqube/"
         echo "===================================================="
 
 
