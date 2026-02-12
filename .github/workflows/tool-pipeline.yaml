@@ -185,11 +185,16 @@ jobs:
     # ----------------------------
     - name: Install Argo CD
       run: |
+        # اتأكدي إنك في المسار الصح
+        ls -R k8s/argocd/ # سطر للاطمئنان إن الملف موجود فعلاً قبل الرن
+        
         helm upgrade --install argocd argo/argo-cd \
           -n $NAMESPACE \
           --wait \
           --timeout 15m \
-          -f k8s/argocd/values.yaml
+          -f ./k8s/argocd/values.yaml \
+          --set server.ingress.enabled=true \
+          --set server.ingress.hosts[0]="demo.local"
     # ----------------------------
     # Wait for Argo CD ingress resource ready
     # ----------------------------
