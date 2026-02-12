@@ -97,97 +97,66 @@ jobs:
         helm repo update
 
     # ----------------------------
-    # Install ingress-nginx (Advanced Logic)
+    # Install ingress-nginx
     # ----------------------------
-    - name: Install ingress-nginx
+    - name: Install Nginx Ingress
       run: |
         set -euo pipefail
-        
         handle_error() {
           echo "::error:: Nginx Ingress deployment failed!"
           kubectl get all -n $NAMESPACE
           kubectl describe pod -l app.kubernetes.io/name=ingress-nginx -n $NAMESPACE || true
-          kubectl logs -l app.kubernetes.io/name=ingress-nginx -n $NAMESPACE --all-containers --tail=100 || true
         }
-        
         trap 'handle_error' ERR
 
         echo "Installing Nginx Ingress Controller..."
-        
-        # Create values file - HTTP only
-        cat > nginx-values.yaml <<EOF
-        controller:
-          config:
-            ssl-redirect: "false"
-            force-ssl-redirect: "false"
-            use-forwarded-headers: "true"
-          service:
-            type: LoadBalancer
-            annotations:
-              service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-              service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
-            ports:
-              http: 80
-            targetPorts:
-              http: http
-            enableHttp: true
-            enableHttps: false
-          admissionWebhooks:
-            enabled: false
-        EOF
-        
         helm upgrade --install ingress-nginx ingress-nginx \
           --repo https://kubernetes.github.io/ingress-nginx \
           --namespace $NAMESPACE --create-namespace \
           --version 4.11.3 \
-          -f nginx-values.yaml \
-          --wait \
-          --timeout 15m \
-          --debug
-
+          --set controller.service.type=LoadBalancer \
+          --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
+          --set controller.admissionWebhooks.enabled=false \
+          --wait --timeout 15m
+    
     # ----------------------------
-    # Get NLB DNS, ARN, and Listener ARN
+    # Link API Gateway to Load Balancer
     # ----------------------------
-    - name: Get NLB and Listener ARN
-      id: nlb
+    - name: Link API Gateway to Load Balancer
+      id: nlb_link
       run: |
-        echo "Waiting for ingress-nginx NLB to be ready..."
-        for i in {1..40}; do
-          SERVICE_NAME=$(kubectl get svc -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-          NLB_DNS=$(kubectl get svc -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-          if [ -n "$NLB_DNS" ]; then
-            echo "✅ NLB DNS ready: $NLB_DNS"
-            break
-          fi
-          echo "⏳ Waiting for NLB..."
+        set -euo pipefail
+        cd "${{ env.TF_DIR }}"
+        
+        echo "Fetching Load Balancer DNS..."
+        # بنحاول نجيب الـ DNS لحد ما يظهر
+        for i in {1..20}; do
+          NLB_DNS=$(kubectl get svc -n $NAMESPACE -l app.kubernetes.io/instance=ingress-nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' || echo "")
+          if [ -n "$NLB_DNS" ]; then break; fi
+          echo "Waiting for DNS..."
           sleep 15
         done
 
         if [ -z "$NLB_DNS" ]; then
-          echo "❌ NLB DNS not found"
+          echo "::error:: Load Balancer DNS not found!"
           exit 1
         fi
 
-        LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
-        NLB_ARN=$(aws elbv2 describe-load-balancers --names $LB_NAME --region $AWS_REGION --query "LoadBalancers[0].LoadBalancerArn" --output text)
+        echo "Found LB: $NLB_DNS"
+        NLB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
         
-        if [ -z "$NLB_ARN" ]; then
-          echo "❌ NLB ARN not found"
-          exit 1
-        fi
-
-        # التعديل هنا: السطر ده بقى لوحده ومظبوط
-        LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query "Listeners[?Port==\`80\`].ListenerArn" --output text)
+        echo "Fetching LB ARN..."
+        LB_ARN=$(aws elbv2 describe-load-balancers --names "$NLB_NAME" --region ${{ env.AWS_REGION }} --query 'LoadBalancers[0].LoadBalancerArn' --output text)
         
-        # وده بقى في سطر جديد لوحده
-        if [ -z "$LISTENER_ARN" ]; then
-          echo "❌ NLB Listener ARN not found"
-          exit 1
-        fi
-
-        echo "✅ NLB Listener ARN: $LISTENER_ARN"
-        echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
-        echo "nlb_listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
+        echo "Fetching Listener ARN..."
+        LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$LB_ARN" --region ${{ env.AWS_REGION }} --query 'Listeners[0].ListenerArn' --output text)
+        
+        echo "Found Listener ARN: $LISTENER_ARN"
+        
+        echo "Running Terraform Apply to sync API Gateway..."
+        # التعديل المهم: بنبعت الـ DNS بالبروتوكول والـ Listener ARN
+        terraform apply -auto-approve -var-file=${{ env.ENV }}.tfvars \
+          -var="nlb_listener_arn=$LISTENER_ARN"
 
     # ----------------------------
     # Terraform Apply API integration (VPC_LINK → NLB Listener ARN)
