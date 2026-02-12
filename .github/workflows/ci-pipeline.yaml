@@ -20,8 +20,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # ضروري للسونار عشان يشوف تاريخ الكود
+          fetch-depth: 0
 
+      # 1. تظبيط الـ AWS CLI (الكونفيجريشن)
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -29,22 +30,29 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 1. جلب رابط الـ ECR والـ NLB DNS للسونار
+      # 2. تثبيت وتجهيز Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      # 3. جلب الـ Outputs (Terraform + Kubectl)
       - name: Get Infra Outputs
         id: infra
         run: |
           cd $TF_DIR
           terraform init -input=false
-          ECR_URL=$(terraform output -raw ecr_repository_url 2>/dev/null || terraform output -raw ecr_url)
+          # لو بتستخدمي workspaces: terraform workspace select ${{ github.event.inputs.env }}
           
-          # جلب الـ DNS الخاص بالـ Load Balancer عشان نكلم السونار
+          ECR_URL=$(terraform output -raw ecr_repository_url 2>/dev/null || terraform output -raw ecr_url)
+          echo "ECR_URL=$ECR_URL" >> $GITHUB_ENV
+          
+          # تحديث Kubeconfig عشان نكلم الكلاستر ونجيب رابط السونار
           aws eks update-kubeconfig --name ${{ github.event.inputs.env }}-eks --region ${{ env.AWS_REGION }}
           NLB_DNS=$(kubectl get svc -n prod -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
-          
-          echo "ECR_URL=$ECR_URL" >> $GITHUB_ENV
           echo "SONAR_HOST_URL=http://$NLB_DNS/sonarqube" >> $GITHUB_ENV
 
-      # 2. فحص الكود بالسونار كيووب
+      # 4. SonarQube Scan
       - name: SonarQube Scan
         uses: sonarsource/sonarqube-scan-action@master
         env:
@@ -56,7 +64,7 @@ jobs:
             -Dsonar.sources=app
             -Dsonar.python.version=3
 
-      # 3. بناء الصورة ورفعها للـ ECR
+      # 5. Build and Push to ECR
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
