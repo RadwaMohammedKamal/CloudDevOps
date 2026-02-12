@@ -162,21 +162,29 @@ jobs:
           echo "⏳ Waiting for NLB..."
           sleep 15
         done
+
         if [ -z "$NLB_DNS" ]; then
           echo "❌ NLB DNS not found"
           exit 1
         fi
+
         LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
         NLB_ARN=$(aws elbv2 describe-load-balancers --names $LB_NAME --region $AWS_REGION --query "LoadBalancers[0].LoadBalancerArn" --output text)
+        
         if [ -z "$NLB_ARN" ]; then
           echo "❌ NLB ARN not found"
           exit 1
         fi
-        LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query "Listeners[0].ListenerArn" --output text)
+
+        # التعديل هنا: السطر ده بقى لوحده ومظبوط
+        LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query "Listeners[?Port==\`80\`].ListenerArn" --output text)
+        
+        # وده بقى في سطر جديد لوحده
         if [ -z "$LISTENER_ARN" ]; then
           echo "❌ NLB Listener ARN not found"
           exit 1
         fi
+
         echo "✅ NLB Listener ARN: $LISTENER_ARN"
         echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
         echo "nlb_listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
@@ -196,9 +204,8 @@ jobs:
     - name: Get API Gateway URL
       id: api
       run: |
-        API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url | tr -d '\r\n')
-        echo "api_url=$API_URL" >> $GITHUB_OUTPUT
-        echo "✅ API Gateway URL: $API_URL"
+        RAW_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url | tr -d '\r\n')
+        echo "api_url=$(echo $RAW_URL | sed 's|/$||')" >> $GITHUB_OUTPUT
 
     # ----------------------------
     # Delete old Argo CD ingress if exists
@@ -347,15 +354,13 @@ jobs:
     # ----------------------------
     - name: Wait for Argo CD ingress
       run: |
-        for i in {1..20}; do
-          INGRESS=$(kubectl get ingress -n $NAMESPACE -l app.kubernetes.io/name=argocd-server -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-          if [ -n "$INGRESS" ]; then
-            echo "✅ Argo CD Ingress ready: $INGRESS"
-            break
-          fi
-          echo "⏳ Waiting for Argo CD Ingress..."
-          sleep 15
-        done
+        echo "⏳ Waiting for Argo CD Server Pod to be ready..."
+        # بنستنى الـ Pod نفسه بدل ما نستنى الـ Ingress Address
+        kubectl wait --namespace $NAMESPACE \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/name=argocd-server \
+          --timeout=300s
+        echo "✅ Argo CD Server is up and running!"
     # ----------------------------
     # Show final URLs
     # ----------------------------
