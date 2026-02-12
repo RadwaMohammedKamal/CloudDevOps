@@ -107,7 +107,10 @@ jobs:
           --set controller.service.type=LoadBalancer \
           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
-          --set controller.service.targetPorts.http=${APP_PORT}
+          --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-scheme"="internet-facing" \
+          --set controller.service.targetPorts.http=${APP_PORT} \
+          --set controller.service.enableHttps=false \
+          --set controller.service.enableHttp=true
     # ----------------------------
     # Get NLB DNS, ARN, and Listener ARN
     # ----------------------------
@@ -210,29 +213,32 @@ jobs:
         API_GATEWAY_URL="${{ steps.api.outputs.api_url }}"
         NLB_HOST="${{ steps.nlb.outputs.nlb_dns }}"
           
-        echo "1. Testing via NLB..."
-        
-        curl -s -I "http://$NLB_HOST/argo/" | grep "HTTP"
+        echo "1. Testing via NLB (with Host Header)..."
+        # ضفنا -H لتمثيل الدومين عشان الـ Ingress Nginx يوافق يمرر الطلب
+        curl -s -I -H "Host: demo.local" "http://$NLB_HOST/argo/" | grep "HTTP"
           
         echo "2. Testing via API Gateway..."
-        # زودنا / بعد argo هنا كمان
+        # هنا مش محتاجين Host Header لأن الـ API Gateway بيضيفه لوحده من الـ Terraform
         HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_GATEWAY_URL/argo/")
+        
+        echo "📡 API Gateway Response: $HTTP_STATUS"
         
         if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
           echo "❌ Flow failed at API Gateway: HTTP $HTTP_STATUS"
           exit 1
         fi
         echo "✅ Everything is 100% working!"
-
     # ----------------------------
     # Show final URLs
     # ----------------------------
     - name: Show final URLs
       run: |
-        echo "===================================="
-        echo "✅ API Gateway URL: ${{ steps.api.outputs.api_url }}/argo"
-        echo "➡ Direct NLB URL: http://${{ steps.nlb.outputs.nlb_dns }}/argo"
-        echo "===================================="
+        echo "===================================================="
+        echo "🚀 Deployment Complete!"
+        echo "✅ API Gateway URL: ${{ steps.api.outputs.api_url }}/argo/"
+        echo "🔗 Internal NLB DNS: http://${{ steps.nlb.outputs.nlb_dns }}/argo/"
+        echo "🏠 Host Header expected: demo.local"
+        echo "===================================================="
 
 
 

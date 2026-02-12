@@ -5,6 +5,13 @@ resource "aws_security_group" "vpc_link_sg" {
   name   = "${var.environment}-vpc-link-sg"
   vpc_id = var.vpc_id
 
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]  
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -39,11 +46,15 @@ resource "aws_apigatewayv2_api" "http_api" {
 resource "aws_apigatewayv2_integration" "nlb_integration" {
   api_id                 = aws_apigatewayv2_api.http_api.id
   integration_type       = "HTTP_PROXY"
-  integration_method     = "ANY"
+  # integration_method     = "ANY"
   integration_uri        = var.nlb_listener_arn 
   connection_type        = "VPC_LINK"
   connection_id          = aws_apigatewayv2_vpc_link.vpc_link.id
   payload_format_version = "1.0"
+  integration_method = "ANY"
+ request_parameters = {
+    "overwrite:header.Host" = "demo.local"
+  }
 }
 # ----------------------------
 # Route (Catch-all)
