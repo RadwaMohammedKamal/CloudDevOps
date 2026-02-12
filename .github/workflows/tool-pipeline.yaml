@@ -231,54 +231,6 @@ jobs:
           INGRESS_EOF
 
     # ----------------------------
-    # Install SonarQube
-    # ----------------------------
-    - name: Install SonarQube
-      un: |
-          set -euo pipefail
-          cd "${TF_DIR}"
-          RAW_NAME=$(/usr/local/bin/terraform-bin output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
-          CLUSTER_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9_-]//g')
-          aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
-          AWS_BIN=$(which aws)
-          sed -i "s|command: aws|command: $AWS_BIN|g" ~/.kube/config || true
-          
-          cat <<EOF > sonarqube-values.yaml
-          sonarWebContext: /sonarqube
-          monitoringPasscode: "SafePasscode123"
-          service:
-            type: ClusterIP
-          ingress:
-            enabled: false
-          EOF
-          
-          helm upgrade --install sonarqube sonarqube-repo/sonarqube \
-            --namespace $NAMESPACE --create-namespace \
-            --wait --timeout 15m \
-            -f sonarqube-values.yaml
-
-          kubectl apply -f - <<INGRESS_EOF
-          apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            name: sonarqube-ingress
-            namespace: $NAMESPACE
-            annotations:
-              nginx.ingress.kubernetes.io/proxy-body-size: "64m"
-          spec:
-            ingressClassName: nginx
-            rules:
-            - http:
-                paths:
-                - path: /sonarqube
-                  pathType: Prefix
-                  backend:
-                    service:
-                      name: sonarqube-sonarqube
-                      port:
-                        number: 9000
-          INGRESS_EOF
-    # ----------------------------
     # Wait for Argo CD ingress resource ready
     # ----------------------------
     - name: Wait for Argo CD ingress
