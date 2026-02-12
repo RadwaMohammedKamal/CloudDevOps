@@ -283,11 +283,11 @@ jobs:
     - name: Argo CD Health Check
       run: |
         NLB_HOST="${{ steps.nlb.outputs.nlb_dns }}"
-        echo "Testing Argo CD path /argo..."
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$NLB_HOST/argo")
+        echo "Testing Argo CD path /argocd..."
+        # جربي الـ Path الصح اللي إحنا برمجنا الـ Ingress عليه
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$NLB_HOST/argocd/")
         if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
           echo "❌ Argo CD ingress test failed: HTTP $HTTP_STATUS"
-          kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=argocd-server
           exit 1
         fi
         echo "✅ Argo CD ingress test passed: HTTP $HTTP_STATUS"
