@@ -59,7 +59,7 @@ def hello():
         <div class="card">
             <div class="rocket">🚀</div>
             <h1>Hello from EKS!</h1>
-            <p>Your Cloud DevOps Pipeline is working perfectly.</p>
+            <p>Cloud DevOps Pipeline is working perfectly</p>
             <div class="status">Deployed via ArgoCD</div>
             
             <div class="footer">
