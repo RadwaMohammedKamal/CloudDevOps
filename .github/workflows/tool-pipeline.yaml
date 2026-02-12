@@ -20,6 +20,7 @@ jobs:
       ENV: ${{ github.event.inputs.env }}
       NAMESPACE: prod
       TF_DIR: terraform
+      APP_PORT: 80
 
     steps:
     # ----------------------------
@@ -38,20 +39,15 @@ jobs:
         unzip -q awscliv2.zip
         sudo ./aws/install --update
         aws --version
-
         curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
         chmod +x kubectl && sudo mv kubectl /usr/local/bin/
         kubectl version --client
-
         curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
         helm version
-
     # ----------------------------
     # Setup Terraform
     # ----------------------------
     - uses: hashicorp/setup-terraform@v2
-      with:
-        terraform_wrapper: false
 
     # ----------------------------
     # Configure AWS credentials
@@ -79,14 +75,12 @@ jobs:
       run: |
         aws eks update-kubeconfig --region $AWS_REGION --name "${ENV}-eks"
         kubectl wait --for=condition=Ready nodes --all --timeout=20m
-
     # ----------------------------
     # Ensure namespace
     # ----------------------------
     - name: Ensure namespace
       run: |
         kubectl get ns $NAMESPACE || kubectl create ns $NAMESPACE
-
     # ----------------------------
     # Add Helm repos
     # ----------------------------
@@ -95,69 +89,54 @@ jobs:
         helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
         helm repo add argo https://argoproj.github.io/argo-helm
         helm repo update
-
     # ----------------------------
-    # Install ingress-nginx
+    # Install ingress-nginx (NLB)
     # ----------------------------
-    - name: Install Nginx Ingress
+    - name: Install ingress-nginx
       run: |
-        set -euo pipefail
-        handle_error() {
-          echo "::error:: Nginx Ingress deployment failed!"
-          kubectl get all -n $NAMESPACE
-          kubectl describe pod -l app.kubernetes.io/name=ingress-nginx -n $NAMESPACE || true
-        }
-        trap 'handle_error' ERR
-
-        echo "Installing Nginx Ingress Controller..."
-        helm upgrade --install ingress-nginx ingress-nginx \
-          --repo https://kubernetes.github.io/ingress-nginx \
-          --namespace $NAMESPACE --create-namespace \
-          --version 4.11.3 \
+        helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+          -n $NAMESPACE \
+          --wait \
+          --timeout 20m \
           --set controller.service.type=LoadBalancer \
           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
-          --set controller.admissionWebhooks.enabled=false \
-          --wait --timeout 15m
-    
+          --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
+          --set controller.service.targetPorts.http=${APP_PORT}
     # ----------------------------
-    # Link API Gateway to Load Balancer
+    # Get NLB DNS, ARN, and Listener ARN
     # ----------------------------
-    - name: Link API Gateway to Load Balancer
-      id: nlb_link
+    - name: Get NLB and Listener ARN
+      id: nlb
       run: |
-        set -euo pipefail
-        cd "${{ env.TF_DIR }}"
-        
-        echo "Fetching Load Balancer DNS..."
-        # بنحاول نجيب الـ DNS لحد ما يظهر
-        for i in {1..20}; do
-          NLB_DNS=$(kubectl get svc -n $NAMESPACE -l app.kubernetes.io/instance=ingress-nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' || echo "")
-          if [ -n "$NLB_DNS" ]; then break; fi
-          echo "Waiting for DNS..."
+        echo "Waiting for ingress-nginx NLB to be ready..."
+        for i in {1..40}; do
+          SERVICE_NAME=$(kubectl get svc -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+          NLB_DNS=$(kubectl get svc -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+          if [ -n "$NLB_DNS" ]; then
+            echo "✅ NLB DNS ready: $NLB_DNS"
+            break
+          fi
+          echo "⏳ Waiting for NLB..."
           sleep 15
         done
-
         if [ -z "$NLB_DNS" ]; then
-          echo "::error:: Load Balancer DNS not found!"
+          echo "❌ NLB DNS not found"
           exit 1
         fi
-
-        echo "Found LB: $NLB_DNS"
-        NLB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
-        
-        echo "Fetching LB ARN..."
-        LB_ARN=$(aws elbv2 describe-load-balancers --names "$NLB_NAME" --region ${{ env.AWS_REGION }} --query 'LoadBalancers[0].LoadBalancerArn' --output text)
-        
-        echo "Fetching Listener ARN..."
-        LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$LB_ARN" --region ${{ env.AWS_REGION }} --query 'Listeners[0].ListenerArn' --output text)
-        
-        echo "Found Listener ARN: $LISTENER_ARN"
-        
-        echo "Running Terraform Apply to sync API Gateway..."
-        # التعديل المهم: بنبعت الـ DNS بالبروتوكول والـ Listener ARN
-        terraform apply -auto-approve -var-file=${{ env.ENV }}.tfvars \
-          -var="nlb_listener_arn=$LISTENER_ARN"
-
+        LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
+        NLB_ARN=$(aws elbv2 describe-load-balancers --names $LB_NAME --region $AWS_REGION --query "LoadBalancers[0].LoadBalancerArn" --output text)
+        if [ -z "$NLB_ARN" ]; then
+          echo "❌ NLB ARN not found"
+          exit 1
+        fi
+        LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query "Listeners[0].ListenerArn" --output text)
+        if [ -z "$LISTENER_ARN" ]; then
+          echo "❌ NLB Listener ARN not found"
+          exit 1
+        fi
+        echo "✅ NLB Listener ARN: $LISTENER_ARN"
+        echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
+        echo "nlb_listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
     # ----------------------------
     # Terraform Apply API integration (VPC_LINK → NLB Listener ARN)
     # ----------------------------
@@ -165,17 +144,18 @@ jobs:
       run: |
         terraform -chdir=${TF_DIR} apply -auto-approve \
           -var-file=${ENV}.tfvars \
-          -var="nlb_listener_arn=${{ steps.nlb.outputs.nlb_listener_arn }}"
-
+          -var="nlb_listener_arn=${{ steps.nlb.outputs.nlb_listener_arn }}" \
+          -var="app_port=${APP_PORT}"
     # ----------------------------
     # Get API Gateway URL
     # ----------------------------
     - name: Get API Gateway URL
       id: api
       run: |
-        RAW_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url | tr -d '\r\n')
-        echo "api_url=$(echo $RAW_URL | sed 's|/$||')" >> $GITHUB_OUTPUT
-
+        API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url | tr -d '\r\n')
+        echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+        echo "✅ API Gateway URL: $API_URL"
+   
     # ----------------------------
     # Delete old Argo CD ingress if exists
     # ----------------------------
@@ -187,9 +167,8 @@ jobs:
         else
           echo "✅ No old Argo CD ingress found"
         fi
-
     # ----------------------------
-    # Install Argo CD
+    # Install Argo CD (values.yaml)
     # ----------------------------
     - name: Install Argo CD
       run: |
@@ -272,133 +251,48 @@ jobs:
                     port:
                       number: 80
         INGRESS_EOF
-
-    # ----------------------------
-    # Install SonarQube
-    # ----------------------------
-    - name: Install SonarQube
-      run: |
-        set -euo pipefail
-        
-        cd "${TF_DIR}"
-        CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
-        aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
-        
-        AWS_BIN=$(which aws)
-        sed -i "s|command: aws|command: $AWS_BIN|g" ~/.kube/config || true
-        
-        echo "Installing SonarQube..."
-        
-        cat > sonarqube-values.yaml <<EOF
-        monitoringPasscode: changeMe
-        community:
-          enabled: true
-        service:
-          type: ClusterIP
-        ingress:
-          enabled: true
-          ingressClassName: nginx
-          hosts:
-            - name: ""
-              path: "/sonarqube"
-          annotations:
-             nginx.ingress.kubernetes.io/proxy-body-size: "64m"
-        sonarWebContext: /sonarqube
-        EOF
-
-        if ! helm upgrade --install sonarqube sonarqube \
-          --repo https://SonarSource.github.io/helm-chart-sonarqube \
-          --namespace $NAMESPACE --create-namespace \
-          --wait --timeout 15m \
-          -f sonarqube-values.yaml; then
-            echo "SonarQube installation failed. Debugging..."
-            kubectl get pods -n $NAMESPACE -l app=sonarqube
-            kubectl describe pods -n $NAMESPACE -l app=sonarqube
-            kubectl logs -n $NAMESPACE -l app=sonarqube --tail=100
-            exit 1
-        fi
-
     # ----------------------------
     # Wait for Argo CD ingress resource ready
     # ----------------------------
     - name: Wait for Argo CD ingress
       run: |
-        echo "⏳ Waiting for Argo CD Server Pod to be ready..."
-        # بنستنى الـ Pod نفسه بدل ما نستنى الـ Ingress Address
-        kubectl wait --namespace $NAMESPACE \
-          --for=condition=ready pod \
-          --selector=app.kubernetes.io/name=argocd-server \
-          --timeout=300s
-        echo "✅ Argo CD Server is up and running!"
+        for i in {1..20}; do
+          INGRESS=$(kubectl get ingress -n $NAMESPACE -l app.kubernetes.io/name=argocd-server -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+          if [ -n "$INGRESS" ]; then
+            echo "✅ Argo CD Ingress ready: $INGRESS"
+            break
+          fi
+          echo "⏳ Waiting for Argo CD Ingress..."
+          sleep 15
+        done
     # ----------------------------
     # Show final URLs
     # ----------------------------
     - name: Show final URLs
       run: |
-        echo "===================================================="
-        echo "🚀 Deployment Complete!"
-        echo "✅ ArgoCD URL: ${{ steps.api.outputs.api_url }}/argocd/"
-        echo "✅ SonarQube URL: ${{ steps.api.outputs.api_url }}/sonarqube/"
-        echo "===================================================="
+        echo "===================================="
+        echo "✅ API Gateway URL:"
+        echo "${{ steps.api.outputs.api_url }}"
+        echo ""
+        echo "➡ Argo CD URL:"
+        echo "http://${{ steps.nlb.outputs.nlb_dns }}/argo"
+        echo "===================================="
     # ----------------------------
-    # Health Check (Argo CD /argocd)
+    # Health Check (Argo CD /argo)
     # ----------------------------
-    - name: Final Health Check
+    - name: Argo CD Health Check
       run: |
-        API_GATEWAY_URL="${{ steps.api.outputs.api_url }}"
-        echo "Testing ArgoCD via API Gateway: $API_GATEWAY_URL/argocd/"
-        
-        # بنجرب كذا مرة عشان لو الـ API Gateway لسه بيحدث الـ Cache
-        for i in {1..5}; do
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_GATEWAY_URL/argocd/")
-          echo "Attempt $i: Response $HTTP_STATUS"
-          if [[ "$HTTP_STATUS" == "200" || "$HTTP_STATUS" == "302" ]]; then
-            echo "✅ ArgoCD is reachable!"
-            exit 0
-          fi
-          sleep 10
-        done
-        echo "❌ ArgoCD is NOT reachable after 5 attempts."
-        exit 1
+        NLB_HOST="${{ steps.nlb.outputs.nlb_dns }}"
+        echo "Testing Argo CD path /argo..."
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$NLB_HOST/argo")
+        if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
+          echo "❌ Argo CD ingress test failed: HTTP $HTTP_STATUS"
+          kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=argocd-server
+          exit 1
+        fi
+        echo "✅ Argo CD ingress test passed: HTTP $HTTP_STATUS"
 
 
-
-# - name: Get NLB and Listener ARN
-#       id: nlb
-#       run: |
-#         echo "Waiting for ingress-nginx NLB to be ready..."
-#         for i in {1..40}; do
-#           SERVICE_NAME=$(kubectl get svc -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-#           NLB_DNS=$(kubectl get svc -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-#           if [ -n "$NLB_DNS" ]; then
-#             echo "✅ NLB DNS ready: $NLB_DNS"
-#             break
-#           fi
-#           echo "⏳ Waiting for NLB..."
-#           sleep 15
-#         done
-
-#         if [ -z "$NLB_DNS" ]; then
-#           echo "❌ NLB DNS not found"
-#           exit 1
-#         fi
-
-#         LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
-#         NLB_ARN=$(aws elbv2 describe-load-balancers --names $LB_NAME --region $AWS_REGION --query "LoadBalancers[0].LoadBalancerArn" --output text)
-#         if [ -z "$NLB_ARN" ]; then
-#           echo "❌ NLB ARN not found"
-#           exit 1
-#         fi
-
-#         LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query "Listeners[0].ListenerArn" --output text)
-#         if [ -z "$LISTENER_ARN" ]; then
-#           echo "❌ NLB Listener ARN not found"
-#           exit 1
-#         fi
-
-#         echo "✅ NLB Listener ARN: $LISTENER_ARN"
-#         echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
-#         echo "nlb_listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
 
 # name: EKS Full Deployment Pipeline Tool
 
@@ -422,7 +316,6 @@ jobs:
 #       ENV: ${{ github.event.inputs.env }}
 #       NAMESPACE: prod
 #       TF_DIR: terraform
-#       APP_PORT: 80
 
 #     steps:
 #     # ----------------------------
@@ -453,6 +346,8 @@ jobs:
 #     # Setup Terraform
 #     # ----------------------------
 #     - uses: hashicorp/setup-terraform@v2
+#       with:
+#         terraform_wrapper: false
 
 #     # ----------------------------
 #     # Configure AWS credentials
@@ -498,120 +393,273 @@ jobs:
 #         helm repo update
 
 #     # ----------------------------
-#     # Install ingress-nginx (NLB)
+#     # Install ingress-nginx
 #     # ----------------------------
-#     - name: Install ingress-nginx
+#     - name: Install Nginx Ingress
 #       run: |
-#         helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-#           -n $NAMESPACE \
-#           --wait \
-#           --timeout 20m \
+#         set -euo pipefail
+#         handle_error() {
+#           echo "::error:: Nginx Ingress deployment failed!"
+#           kubectl get all -n $NAMESPACE
+#           kubectl describe pod -l app.kubernetes.io/name=ingress-nginx -n $NAMESPACE || true
+#         }
+#         trap 'handle_error' ERR
+
+#         echo "Installing Nginx Ingress Controller..."
+#         helm upgrade --install ingress-nginx ingress-nginx \
+#           --repo https://kubernetes.github.io/ingress-nginx \
+#           --namespace $NAMESPACE --create-namespace \
+#           --version 4.11.3 \
 #           --set controller.service.type=LoadBalancer \
 #           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
-#           --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"="ip" \
-#           --set controller.service.targetPorts.http=${APP_PORT}
-
+#           --set controller.admissionWebhooks.enabled=false \
+#           --wait --timeout 15m
+    
 #     # ----------------------------
-#     # Get NLB DNS and Listener ARN
+#     # Link API Gateway to Load Balancer
 #     # ----------------------------
-#     - name: Get NLB and Listener ARN
-#       id: nlb
+#     - name: Link API Gateway to Load Balancer
+#       id: nlb_link
 #       run: |
-#         SERVICE_NAME="ingress-nginx-controller"
-
-#         echo "Waiting for NLB DNS to be available..."
-#         NLB_DNS=""
-#         for i in {1..40}; do
-#           NLB_DNS=$(kubectl get svc -n $NAMESPACE $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
-#           if [ -n "$NLB_DNS" ]; then
-#             echo "✅ NLB DNS found: $NLB_DNS"
-#             break
-#           fi
-#           echo "Waiting 15s..."
+#         set -euo pipefail
+#         cd "${{ env.TF_DIR }}"
+        
+#         echo "Fetching Load Balancer DNS..."
+#         # بنحاول نجيب الـ DNS لحد ما يظهر
+#         for i in {1..20}; do
+#           NLB_DNS=$(kubectl get svc -n $NAMESPACE -l app.kubernetes.io/instance=ingress-nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' || echo "")
+#           if [ -n "$NLB_DNS" ]; then break; fi
+#           echo "Waiting for DNS..."
 #           sleep 15
 #         done
 
 #         if [ -z "$NLB_DNS" ]; then
-#           echo "❌ NLB DNS not found after 10 min"
+#           echo "::error:: Load Balancer DNS not found!"
 #           exit 1
 #         fi
 
-#         LB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
-#         NLB_ARN=$(aws elbv2 describe-load-balancers \
-#           --names $LB_NAME \
-#           --region $AWS_REGION \
-#           --query 'LoadBalancers[0].LoadBalancerArn' \
-#           --output text)
-
-#         LISTENER_ARN=""
-#         for i in {1..20}; do
-#           LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $NLB_ARN --region $AWS_REGION --query 'Listeners[0].ListenerArn' --output text || echo "")
-#           if [ -n "$LISTENER_ARN" ]; then
-#             echo "✅ Listener ARN found: $LISTENER_ARN"
-#             break
-#           fi
-#           echo "Waiting 15s for listener..."
-#           sleep 15
-#         done
-
-#         if [ -z "$LISTENER_ARN" ]; then
-#           echo "❌ Listener ARN not found!"
-#           exit 1
-#         fi
-
-#         echo "nlb_dns=$NLB_DNS" >> $GITHUB_OUTPUT
-#         echo "listener_arn=$LISTENER_ARN" >> $GITHUB_OUTPUT
+#         echo "Found LB: $NLB_DNS"
+#         NLB_NAME=$(echo $NLB_DNS | cut -d'-' -f1)
+        
+#         echo "Fetching LB ARN..."
+#         LB_ARN=$(aws elbv2 describe-load-balancers --names "$NLB_NAME" --region ${{ env.AWS_REGION }} --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+        
+#         echo "Fetching Listener ARN..."
+#         LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$LB_ARN" --region ${{ env.AWS_REGION }} --query 'Listeners[0].ListenerArn' --output text)
+        
+#         echo "Found Listener ARN: $LISTENER_ARN"
+        
+#         echo "Running Terraform Apply to sync API Gateway..."
+#         # التعديل المهم: بنبعت الـ DNS بالبروتوكول والـ Listener ARN
+#         terraform apply -auto-approve -var-file=${{ env.ENV }}.tfvars \
+#           -var="nlb_listener_arn=$LISTENER_ARN"
 
 #     # ----------------------------
-#     # Terraform Apply API integration
+#     # Terraform Apply API integration (VPC_LINK → NLB Listener ARN)
 #     # ----------------------------
 #     - name: Terraform Apply API integration
 #       run: |
 #         terraform -chdir=${TF_DIR} apply -auto-approve \
 #           -var-file=${ENV}.tfvars \
-#           -var="nlb_listener_arn=${{ steps.nlb.outputs.listener_arn }}" \
-#           -var="app_port=${APP_PORT}"
+#           -var="nlb_listener_arn=${{ steps.nlb.outputs.nlb_listener_arn }}"
 
 #     # ----------------------------
-#     # Get API Gateway URL (cleaned)
+#     # Get API Gateway URL
 #     # ----------------------------
 #     - name: Get API Gateway URL
 #       id: api
 #       run: |
-#         API_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url | tr -d '\r\n' | xargs)
-#         echo "api_url=$API_URL" >> $GITHUB_OUTPUT
-#         echo "✅ API Gateway URL: $API_URL"
+#         RAW_URL=$(terraform -chdir=${TF_DIR} output -raw api_gateway_url | tr -d '\r\n')
+#         echo "api_url=$(echo $RAW_URL | sed 's|/$||')" >> $GITHUB_OUTPUT
 
 #     # ----------------------------
-#     # Install Argo CD (HTTP, /argo)
+#     # Delete old Argo CD ingress if exists
+#     # ----------------------------
+#     - name: Delete old Argo CD ingress if exists
+#       run: |
+#         if kubectl get ingress -n $NAMESPACE -l app.kubernetes.io/name=argocd-server >/dev/null 2>&1; then
+#           echo "🗑️ Deleting old Argo CD ingress..."
+#           kubectl delete ingress -n $NAMESPACE -l app.kubernetes.io/name=argocd-server
+#         else
+#           echo "✅ No old Argo CD ingress found"
+#         fi
+
+#     # ----------------------------
+#     # Install Argo CD
 #     # ----------------------------
 #     - name: Install Argo CD
 #       run: |
-#         helm upgrade --install argocd argo/argo-cd \
-#           -n $NAMESPACE \
-#           --wait \
-#           --timeout 15m \
-#           --set server.service.type=ClusterIP \
-#           --set server.ingress.enabled=true \
-#           --set server.ingress.ingressClassName=nginx \
-#           --set server.ingress.hosts[0].host="argocd.example.com" \
-#           --set server.ingress.hosts[0].paths[0].path="/argo" \
-#           --set server.ingress.hosts[0].paths[0].pathType=Prefix \
-#           --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/rewrite-target"="/\$2" \
-#           --set server.ingress.annotations."nginx\.ingress\.kubernetes\.io/ssl-redirect"="false"
+#         set -euo pipefail
+        
+#         # 1. جلب اسم الكلاستر من مخرجات تيريفورم
+#         cd "${TF_DIR}"
+#         CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
+        
+#         # 2. تحديث Kubeconfig
+#         echo "Updating Kubeconfig for $CLUSTER_NAME..."
+#         aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
+        
+#         # 3. Patch Kubeconfig (لضمان عمل الـ Auth بشكل سليم)
+#         AWS_BIN=$(which aws)
+#         sed -i "s|command: aws|command: $AWS_BIN|g" ~/.kube/config || true
+        
+#         echo "Installing Argo CD..."
+        
+#         # إنشاء ملف الإعدادات بنفس القيم بالظبط
+#         cat <<'EOF' > argocd-ingress-values.yaml
+#         redis-ha:
+#           enabled: false
+#         controller:
+#           replicas: 1
+#         server:
+#           replicas: 1
+#           service:
+#             type: ClusterIP
+#           ingress:
+#             enabled: false
+#           extraArgs:
+#             - --insecure
+#             - --rootpath=/argocd
+#         repoServer:
+#           replicas: 1
+#         applicationController:
+#           replicas: 1
+#         EOF
+        
+#         # نظام المحاولات (Until loop) - مطابق تماماً
+#         n=0
+#         until [ "$n" -ge 3 ]
+#         do
+#            helm upgrade --install argocd argo-cd \
+#              --repo https://argoproj.github.io/argo-helm \
+#              --namespace $NAMESPACE --create-namespace \
+#              --wait --timeout 10m \
+#              -f argocd-ingress-values.yaml && break
+#            n=$((n+1))
+#            echo "Deploy failed (attempt $n/3). Retrying in 10s..."
+#            helm uninstall argocd -n $NAMESPACE || true
+#            sleep 20
+#         done
+        
+#         if [ "$n" -eq 3 ]; then
+#            echo "ArgoCD helm upgrade failed after 3 attempts."
+#            exit 1
+#         fi
+        
+#         echo "Applying standalone ArgoCD Ingress..."
+#         kubectl apply -f - <<'INGRESS_EOF'
+#         apiVersion: networking.k8s.io/v1
+#         kind: Ingress
+#         metadata:
+#           name: argocd-server
+#           namespace: ${{ env.NAMESPACE }}
+#           annotations:
+#             nginx.ingress.kubernetes.io/backend-protocol: HTTP
+#         spec:
+#           ingressClassName: nginx
+#           rules:
+#           - http:
+#               paths:
+#               - path: /argocd
+#                 pathType: Prefix
+#                 backend:
+#                   service:
+#                     name: argocd-server
+#                     port:
+#                       number: 80
+#         INGRESS_EOF
 
+#     # ----------------------------
+#     # Install SonarQube
+#     # ----------------------------
+#     - name: Install SonarQube
+#       run: |
+#         set -euo pipefail
+        
+#         cd "${TF_DIR}"
+#         CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
+#         aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
+        
+#         AWS_BIN=$(which aws)
+#         sed -i "s|command: aws|command: $AWS_BIN|g" ~/.kube/config || true
+        
+#         echo "Installing SonarQube..."
+        
+#         cat > sonarqube-values.yaml <<EOF
+#         monitoringPasscode: changeMe
+#         community:
+#           enabled: true
+#         service:
+#           type: ClusterIP
+#         ingress:
+#           enabled: true
+#           ingressClassName: nginx
+#           hosts:
+#             - name: ""
+#               path: "/sonarqube"
+#           annotations:
+#              nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+#         sonarWebContext: /sonarqube
+#         EOF
+
+#         if ! helm upgrade --install sonarqube sonarqube \
+#           --repo https://SonarSource.github.io/helm-chart-sonarqube \
+#           --namespace $NAMESPACE --create-namespace \
+#           --wait --timeout 15m \
+#           -f sonarqube-values.yaml; then
+#             echo "SonarQube installation failed. Debugging..."
+#             kubectl get pods -n $NAMESPACE -l app=sonarqube
+#             kubectl describe pods -n $NAMESPACE -l app=sonarqube
+#             kubectl logs -n $NAMESPACE -l app=sonarqube --tail=100
+#             exit 1
+#         fi
+
+#     # ----------------------------
+#     # Wait for Argo CD ingress resource ready
+#     # ----------------------------
+#     - name: Wait for Argo CD ingress
+#       run: |
+#         echo "⏳ Waiting for Argo CD Server Pod to be ready..."
+#         # بنستنى الـ Pod نفسه بدل ما نستنى الـ Ingress Address
+#         kubectl wait --namespace $NAMESPACE \
+#           --for=condition=ready pod \
+#           --selector=app.kubernetes.io/name=argocd-server \
+#           --timeout=300s
+#         echo "✅ Argo CD Server is up and running!"
 #     # ----------------------------
 #     # Show final URLs
 #     # ----------------------------
 #     - name: Show final URLs
 #       run: |
-#         echo "===================================="
-#         echo "✅ API Gateway URL (APP):"
-#         echo "${{ steps.api.outputs.api_url }}"
-#         echo ""
-#         echo "✅ Argo CD URL (HTTP):"
-#         echo "http://${{ steps.nlb.outputs.nlb_dns }}/argo"
-#         echo "===================================="
+#         echo "===================================================="
+#         echo "🚀 Deployment Complete!"
+#         echo "✅ ArgoCD URL: ${{ steps.api.outputs.api_url }}/argocd/"
+#         echo "✅ SonarQube URL: ${{ steps.api.outputs.api_url }}/sonarqube/"
+#         echo "===================================================="
+#     # ----------------------------
+#     # Health Check (Argo CD /argocd)
+#     # ----------------------------
+#     - name: Final Health Check
+#       run: |
+#         API_GATEWAY_URL="${{ steps.api.outputs.api_url }}"
+#         echo "Testing ArgoCD via API Gateway: $API_GATEWAY_URL/argocd/"
+        
+#         # بنجرب كذا مرة عشان لو الـ API Gateway لسه بيحدث الـ Cache
+#         for i in {1..5}; do
+#           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_GATEWAY_URL/argocd/")
+#           echo "Attempt $i: Response $HTTP_STATUS"
+#           if [[ "$HTTP_STATUS" == "200" || "$HTTP_STATUS" == "302" ]]; then
+#             echo "✅ ArgoCD is reachable!"
+#             exit 0
+#           fi
+#           sleep 10
+#         done
+#         echo "❌ ArgoCD is NOT reachable after 5 attempts."
+#         exit 1
+
+
+
+
 
 
 
