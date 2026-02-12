@@ -62,8 +62,8 @@ module "api" {
 # Security Group Rule to allow traffic from API VPC Link SG to EKS nodes
 resource "aws_security_group_rule" "allow_vpc_link_to_nodes" {
   type                     = "ingress"
-  from_port                = var.app_port
-  to_port                  = var.app_port
+  from_port                = 0
+  to_port                  = 65535
   protocol                 = "tcp"
   security_group_id        = module.vpc.eks_nodes_sg_id
   source_security_group_id = module.api.vpc_link_sg_id
