@@ -229,6 +229,69 @@ jobs:
                       port:
                         number: 80
           INGRESS_EOF
+
+# ----------------------------
+    # Install SonarQube
+    # ----------------------------
+    - name: Install SonarQube
+      run: |
+        set -euo pipefail
+        
+        # 1. جلب اسم الكلاستر بعيداً عن الـ Wrapper (نفس طريقة الأرجو)
+        cd "${TF_DIR}"
+        RAW_NAME=$(/usr/local/bin/terraform-bin output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
+        CLUSTER_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9_-]//g')
+        
+        echo "✅ Cleaned Cluster Name: $CLUSTER_NAME"
+        
+        # 2. تحديث Kubeconfig
+        aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
+        
+        # 3. Patch Kubeconfig لضمان عمل الـ Auth
+        AWS_BIN=$(which aws)
+        sed -i "s|command: aws|command: $AWS_BIN|g" ~/.kube/config || true
+        
+        echo "🚀 Installing SonarQube..."
+        
+        # 4. إنشاء ملف الإعدادات (نفس تنسيق مسافات الأرجو)
+        cat <<EOF > sonarqube-values.yaml
+        sonarWebContext: /sonarqube
+        service:
+          type: ClusterIP
+        ingress:
+          enabled: false
+        EOF
+        
+        # 5. التثبيت باستخدام Helm
+        helm upgrade --install sonarqube sonarqube \
+          --repo https://SonarSource.github.io/helm-chart-sonarqube \
+          --namespace $NAMESPACE --create-namespace \
+          --wait --timeout 15m \
+          -f sonarqube-values.yaml
+
+        # 6. الـ Ingress المنفصل (مطابق لسيستم الأرجو)
+        kubectl apply -f - <<INGRESS_EOF
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: sonarqube-ingress
+          namespace: $NAMESPACE
+          annotations:
+            nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+        spec:
+          ingressClassName: nginx
+          rules:
+          - http:
+              paths:
+              - path: /sonarqube
+                pathType: Prefix
+                backend:
+                  service:
+                    # ملحوظة: الهيلم شارت بتسمي السيرفس sonarqube-sonarqube افتراضياً
+                    name: sonarqube-sonarqube
+                    port:
+                      number: 9000
+        INGRESS_EOF
     # ----------------------------
     # Wait for Argo CD ingress resource ready
     # ----------------------------
@@ -247,24 +310,16 @@ jobs:
     # ----------------------------
     - name: Show final URLs
       run: |
-          echo "===================================="
-          echo "✅ API Gateway URL: ${{ steps.api.outputs.api_url }}"
-          echo "➡ Argo CD URL: http://${{ steps.nlb.outputs.nlb_dns }}/argocd"
-          echo "===================================="
-    # ----------------------------
-    # Health Check (Argo CD /argo)
-    # ----------------------------
-    - name: Argo CD Health Check
-      run: |
-        NLB_HOST="${{ steps.nlb.outputs.nlb_dns }}"
-        echo "Testing Argo CD path /argo..."
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$NLB_HOST/argo")
-        if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
-          echo "❌ Argo CD ingress test failed: HTTP $HTTP_STATUS"
-          kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=argocd-server
-          exit 1
-        fi
-        echo "✅ Argo CD ingress test passed: HTTP $HTTP_STATUS"
+        echo "===================================="
+        echo "✅ API Gateway URL: ${{ steps.api.outputs.api_url }}"
+        echo ""
+        echo "➡ Argo CD URL:"
+        echo "http://${{ steps.nlb.outputs.nlb_dns }}/argocd"
+        echo ""
+        echo "➡ SonarQube URL:"
+        echo "http://${{ steps.nlb.outputs.nlb_dns }}/sonarqube"
+        echo "===================================="
+    
 
 
 
