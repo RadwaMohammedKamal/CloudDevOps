@@ -167,74 +167,47 @@ jobs:
         else
           echo "✅ No old Argo CD ingress found"
         fi
-    # ----------------------------
-    # Install Argo CD (values.yaml)
-    # ----------------------------
-    # ----------------------------
-    # Install Argo CD
-    # ----------------------------
+      # ----------------------------
+      # Install Argo CD (Fixed Clean Version)
+      # ----------------------------
     - name: Install Argo CD
       run: |
           set -euo pipefail
           
-          # 1. جلب اسم الكلاستر وتنظيفه تماماً
+          # 1. جلب اسم الكلاستر بعيداً عن الـ Wrapper بتاع الـ Action عشان الرموز المخفية
           cd "${TF_DIR}"
-          RAW_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
-          CLUSTER_NAME=$(echo "$RAW_NAME" | xargs | tr -d '\r\n')
+          # هنستخدم terraform-bin مباشرة عشان نهرب من الـ debug info
+          RAW_NAME=$(/usr/local/bin/terraform-bin output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
+          # تنظيف شامل: حذف أي حاجة مش حروف أو أرقام أو شرطة
+          CLUSTER_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9_-]//g')
+          
+          echo "✅ Cleaned Cluster Name: $CLUSTER_NAME"
           
           # 2. تحديث Kubeconfig
-          echo "Updating Kubeconfig for $CLUSTER_NAME..."
           aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
           
           # 3. Patch Kubeconfig
           AWS_BIN=$(which aws)
           sed -i "s|command: aws|command: $AWS_BIN|g" ~/.kube/config || true
           
-          echo "Installing Argo CD..."
+          echo "🚀 Installing Argo CD..."
           
-          # 4. إنشاء ملف الإعدادات بمسافات صحيحة
+          # 4. إنشاء ملف الإعدادات (لاحظي المسافات في الـ YAML)
           cat <<EOF > argocd-ingress-values.yaml
-          redis-ha:
-            enabled: false
-          controller:
-            replicas: 1
           server:
-            replicas: 1
-            service:
-              type: ClusterIP
-            ingress:
-              enabled: false
             extraArgs:
               - --insecure
               - --rootpath=/argocd
-          repoServer:
-            replicas: 1
-          applicationController:
-            replicas: 1
           EOF
           
-          # 5. نظام المحاولات
-          n=0
-          until [ "$n" -ge 3 ]
-          do
-            helm upgrade --install argocd argo-cd \
-              --repo https://argoproj.github.io/argo-helm \
-              --namespace $NAMESPACE --create-namespace \
-              --wait --timeout 10m \
-              -f argocd-ingress-values.yaml && break
-            n=$((n+1))
-            echo "Deploy failed (attempt $n/3). Retrying..."
-            helm uninstall argocd -n $NAMESPACE || true
-            sleep 20
-          done
-          
-          if [ "$n" -eq 3 ]; then
-            echo "ArgoCD helm upgrade failed after 3 attempts."
-            exit 1
-          fi
-          
-          # 6. Applying standalone Ingress
-          echo "Applying standalone ArgoCD Ingress..."
+          # 5. التثبيت
+          helm upgrade --install argocd argo-cd \
+            --repo https://argoproj.github.io/argo-helm \
+            --namespace $NAMESPACE --create-namespace \
+            --wait --timeout 10m \
+            -f argocd-ingress-values.yaml
+
+          # 6. الـ Ingress
           kubectl apply -f - <<INGRESS_EOF
           apiVersion: networking.k8s.io/v1
           kind: Ingress
