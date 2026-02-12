@@ -15,6 +15,9 @@ ingress:
   className: "nginx"
   path: /app
   host: ""
+secrets:
+  mongo:
+    enabled: false
 
 
 # replicaCount: 2
