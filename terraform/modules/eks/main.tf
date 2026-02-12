@@ -32,7 +32,7 @@ resource "aws_eks_node_group" "this" {
     max_size     = 3
   }
 
-  instance_types = ["t3.small"]
+  instance_types = ["m7i-flex.large"]
   capacity_type  = "ON_DEMAND"
 
   tags = var.tags
