@@ -170,87 +170,92 @@ jobs:
     # ----------------------------
     # Install Argo CD (values.yaml)
     # ----------------------------
+    # ----------------------------
+    # Install Argo CD
+    # ----------------------------
     - name: Install Argo CD
       run: |
-        set -euo pipefail
-        
-        # 1. جلب اسم الكلاستر من مخرجات تيريفورم
-        cd "${TF_DIR}"
-        CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
-        
-        # 2. تحديث Kubeconfig
-        echo "Updating Kubeconfig for $CLUSTER_NAME..."
-        aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
-        
-        # 3. Patch Kubeconfig (لضمان عمل الـ Auth بشكل سليم)
-        AWS_BIN=$(which aws)
-        sed -i "s|command: aws|command: $AWS_BIN|g" ~/.kube/config || true
-        
-        echo "Installing Argo CD..."
-        
-        # إنشاء ملف الإعدادات بنفس القيم بالظبط
-        cat <<'EOF' > argocd-ingress-values.yaml
-        redis-ha:
-          enabled: false
-        controller:
-          replicas: 1
-        server:
-          replicas: 1
-          service:
-            type: ClusterIP
-          ingress:
+          set -euo pipefail
+          
+          # 1. جلب اسم الكلاستر وتنظيفه تماماً
+          cd "${TF_DIR}"
+          RAW_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
+          CLUSTER_NAME=$(echo "$RAW_NAME" | xargs | tr -d '\r\n')
+          
+          # 2. تحديث Kubeconfig
+          echo "Updating Kubeconfig for $CLUSTER_NAME..."
+          aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
+          
+          # 3. Patch Kubeconfig
+          AWS_BIN=$(which aws)
+          sed -i "s|command: aws|command: $AWS_BIN|g" ~/.kube/config || true
+          
+          echo "Installing Argo CD..."
+          
+          # 4. إنشاء ملف الإعدادات بمسافات صحيحة
+          cat <<EOF > argocd-ingress-values.yaml
+          redis-ha:
             enabled: false
-          extraArgs:
-            - --insecure
-            - --rootpath=/argocd
-        repoServer:
-          replicas: 1
-        applicationController:
-          replicas: 1
-        EOF
-        
-        # نظام المحاولات (Until loop) - مطابق تماماً
-        n=0
-        until [ "$n" -ge 3 ]
-        do
-           helm upgrade --install argocd argo-cd \
-             --repo https://argoproj.github.io/argo-helm \
-             --namespace $NAMESPACE --create-namespace \
-             --wait --timeout 10m \
-             -f argocd-ingress-values.yaml && break
-           n=$((n+1))
-           echo "Deploy failed (attempt $n/3). Retrying in 10s..."
-           helm uninstall argocd -n $NAMESPACE || true
-           sleep 20
-        done
-        
-        if [ "$n" -eq 3 ]; then
-           echo "ArgoCD helm upgrade failed after 3 attempts."
-           exit 1
-        fi
-        
-        echo "Applying standalone ArgoCD Ingress..."
-        kubectl apply -f - <<'INGRESS_EOF'
-        apiVersion: networking.k8s.io/v1
-        kind: Ingress
-        metadata:
-          name: argocd-server
-          namespace: ${{ env.NAMESPACE }}
-          annotations:
-            nginx.ingress.kubernetes.io/backend-protocol: HTTP
-        spec:
-          ingressClassName: nginx
-          rules:
-          - http:
-              paths:
-              - path: /argocd
-                pathType: Prefix
-                backend:
-                  service:
-                    name: argocd-server
-                    port:
-                      number: 80
-        INGRESS_EOF
+          controller:
+            replicas: 1
+          server:
+            replicas: 1
+            service:
+              type: ClusterIP
+            ingress:
+              enabled: false
+            extraArgs:
+              - --insecure
+              - --rootpath=/argocd
+          repoServer:
+            replicas: 1
+          applicationController:
+            replicas: 1
+          EOF
+          
+          # 5. نظام المحاولات
+          n=0
+          until [ "$n" -ge 3 ]
+          do
+            helm upgrade --install argocd argo-cd \
+              --repo https://argoproj.github.io/argo-helm \
+              --namespace $NAMESPACE --create-namespace \
+              --wait --timeout 10m \
+              -f argocd-ingress-values.yaml && break
+            n=$((n+1))
+            echo "Deploy failed (attempt $n/3). Retrying..."
+            helm uninstall argocd -n $NAMESPACE || true
+            sleep 20
+          done
+          
+          if [ "$n" -eq 3 ]; then
+            echo "ArgoCD helm upgrade failed after 3 attempts."
+            exit 1
+          fi
+          
+          # 6. Applying standalone Ingress
+          echo "Applying standalone ArgoCD Ingress..."
+          kubectl apply -f - <<INGRESS_EOF
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: argocd-server
+            namespace: $NAMESPACE
+            annotations:
+              nginx.ingress.kubernetes.io/backend-protocol: HTTP
+          spec:
+            ingressClassName: nginx
+            rules:
+            - http:
+                paths:
+                - path: /argocd
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: argocd-server
+                      port:
+                        number: 80
+          INGRESS_EOF
     # ----------------------------
     # Wait for Argo CD ingress resource ready
     # ----------------------------
@@ -283,11 +288,11 @@ jobs:
     - name: Argo CD Health Check
       run: |
         NLB_HOST="${{ steps.nlb.outputs.nlb_dns }}"
-        echo "Testing Argo CD path /argocd..."
-        # جربي الـ Path الصح اللي إحنا برمجنا الـ Ingress عليه
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$NLB_HOST/argocd/")
+        echo "Testing Argo CD path /argo..."
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$NLB_HOST/argo")
         if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
           echo "❌ Argo CD ingress test failed: HTTP $HTTP_STATUS"
+          kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=argocd-server
           exit 1
         fi
         echo "✅ Argo CD ingress test passed: HTTP $HTTP_STATUS"
