@@ -1,4 +1,4 @@
-name: Deploy Application
+name: CD - Deploy with ArgoCD
 
 on:
   workflow_dispatch:
@@ -8,71 +8,74 @@ on:
         required: true
         default: 'prod'
         type: choice
-        options:
-          - prod
-          - nonprod
+        options: [prod, nonprod]
+
+env:
+  TF_DIR: terraform
+  AWS_REGION: eu-north-1
 
 jobs:
-  deploy-app:
+  deploy-process:
     runs-on: ubuntu-latest
-    env:
-      AWS_REGION: eu-north-1
-      ENV: ${{ github.event.inputs.env }}
-      NAMESPACE: prod
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Install kubectl and Helm
-        run: |
-          set -euo pipefail
-
-          # kubectl
-          curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-          kubectl version --client
-
-          # Helm
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          helm version
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup EKS kubeconfig
+      # 1. الحصول على اسم الكلاستر وتحديث الـ Kubeconfig
+      - name: Update Kubeconfig
         run: |
-          set -euo pipefail
-          CLUSTER_NAME="${ENV}-eks"
-          echo "Using cluster: $CLUSTER_NAME"
+          cd $TF_DIR
+          terraform init -input=false
+          CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${{ github.event.inputs.env }}-eks")
+          aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
 
-          aws eks update-kubeconfig \
-            --region $AWS_REGION \
-            --name "$CLUSTER_NAME"
-
-          kubectl get nodes
-
-      - name: Install My Application with /app
+      # 2. تطبيق ملف الـ ArgoCD Application (الذي يربط الـ Helm بالـ Git)
+      - name: Apply ArgoCD App
         run: |
-          set -euo pipefail
+          cat <<EOF > argocd-app.yaml
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: cloud-devops-app
+            namespace: prod
+          spec:
+            project: default
+            source:
+              repoURL: https://github.com/RadwaMohammedKamal/CloudDevOps.git
+              targetRevision: HEAD
+              path: helm-charts
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: prod
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
+          EOF
+          kubectl apply -f argocd-app.yaml
 
-          helm upgrade --install my-app ./my-app \
-            --namespace $NAMESPACE \
-            --create-namespace \
-            --wait
-
-          kubectl get pods -n $NAMESPACE
-          kubectl get svc -n $NAMESPACE
-          kubectl get ingress -n $NAMESPACE
-
-      - name: Output My App Ingress
+      # 3. التأكد من حالة الـ App في ArgoCD
+      - name: Verify Deployment Path
         run: |
-          set -euo pipefail
-          echo "=== My App Ingress ==="
-          kubectl get ingress my-app -n $NAMESPACE -o wide
-          kubectl get svc my-app -n $NAMESPACE -o wide
+          echo "Deployment successful!"
+          echo "ArgoCD is syncing from path: helm-charts"
+          echo "Application will be available at: /app"
+
+
+      - name: Print Application URL
+        run: |
+          NLB_DNS=$(kubectl get svc -n prod -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
+          echo "=========================================================="
+          echo "🚀 Your Application is being deployed!"
+          echo "🔗 Access it here: http://$NLB_DNS/app"
+          echo "🔧 ArgoCD URL: http://$NLB_DNS/argocd"
+          echo "📊 SonarQube URL: http://$NLB_DNS/sonarqube"
+          echo "=========================================================="

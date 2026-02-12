@@ -1,0 +1,70 @@
+name: CI - Build & Sonar Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: 'Environment'
+        required: true
+        default: 'prod'
+        type: choice
+        options: [prod, nonprod]
+
+env:
+  TF_DIR: terraform
+  AWS_REGION: eu-north-1
+
+jobs:
+  ci-process:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # ضروري للسونار عشان يشوف تاريخ الكود
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 1. جلب رابط الـ ECR والـ NLB DNS للسونار
+      - name: Get Infra Outputs
+        id: infra
+        run: |
+          cd $TF_DIR
+          terraform init -input=false
+          ECR_URL=$(terraform output -raw ecr_repository_url 2>/dev/null || terraform output -raw ecr_url)
+          
+          # جلب الـ DNS الخاص بالـ Load Balancer عشان نكلم السونار
+          aws eks update-kubeconfig --name ${{ github.event.inputs.env }}-eks --region ${{ env.AWS_REGION }}
+          NLB_DNS=$(kubectl get svc -n prod -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
+          
+          echo "ECR_URL=$ECR_URL" >> $GITHUB_ENV
+          echo "SONAR_HOST_URL=http://$NLB_DNS/sonarqube" >> $GITHUB_ENV
+
+      # 2. فحص الكود بالسونار كيووب
+      - name: SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=cloud-devops-app
+            -Dsonar.sources=app
+            -Dsonar.python.version=3
+
+      # 3. بناء الصورة ورفعها للـ ECR
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Image
+        run: |
+          IMAGE_TAG=${GITHUB_SHA::7}
+          docker build -t app:$IMAGE_TAG ./app
+          docker tag app:$IMAGE_TAG ${{ env.ECR_URL }}:$IMAGE_TAG
+          docker tag app:$IMAGE_TAG ${{ env.ECR_URL }}:latest
+          docker push ${{ env.ECR_URL }}:$IMAGE_TAG
+          docker push ${{ env.ECR_URL }}:latest

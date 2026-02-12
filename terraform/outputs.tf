@@ -22,6 +22,9 @@ output "api_gateway_url" {
   description = "API Gateway base URL"
 }
 
+output "ecr_repository_url" {
+  value = module.ecr.repository_url
+}
 
 
 # output "vpc_id" { value = module.vpc.vpc_id }

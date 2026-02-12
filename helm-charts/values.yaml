@@ -1,0 +1,34 @@
+replicaCount: 2
+
+image:
+  repository: "" 
+  tag: "latest"      
+  pullPolicy: Always
+
+service:
+  type: ClusterIP      
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: "nginx"
+  path: /app
+  host: ""
+
+
+# replicaCount: 2
+
+# image:
+#   repository: <AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com/hello-app  
+#   tag: ""     
+#   pullPolicy: Always
+
+# service:
+#   type: ClusterIP     
+#   port: 80
+#   targetPort: 8080
+
+# ingress:
+#   enabled: true
+#   host: hello.example.com   
