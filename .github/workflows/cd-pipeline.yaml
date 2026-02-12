@@ -27,7 +27,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 1. الحصول على اسم الكلاستر وتحديث الـ Kubeconfig
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
       - name: Update Kubeconfig
         run: |
           cd $TF_DIR
@@ -35,7 +39,17 @@ jobs:
           CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${{ github.event.inputs.env }}-eks")
           aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
 
-      # 2. تطبيق ملف الـ ArgoCD Application (الذي يربط الـ Helm بالـ Git)
+      # خطوة ربط الـ ECR بالهيلم شارت عشان ميديناش ImagePullBackOff
+      - name: Update Helm with ECR URL
+        run: |
+          cd $TF_DIR
+          ECR_URL=$(terraform output -raw ecr_repository_url)
+          cd ../helm-charts
+          # تحديث الـ repository في ملف الـ values.yaml
+          sed -i "s|repository:.*|repository: $ECR_URL|g" values.yaml
+          # التأكد من أن الـ tag هو latest
+          sed -i "s|tag:.*|tag: \"latest\"|g" values.yaml
+
       - name: Apply ArgoCD App
         run: |
           cat <<EOF > argocd-app.yaml
@@ -43,7 +57,7 @@ jobs:
           kind: Application
           metadata:
             name: cloud-devops-app
-            namespace: prod
+            namespace: prod  # هنا غيرناها لـ prod بناءً على كلامك
           spec:
             project: default
             source:
@@ -62,20 +76,12 @@ jobs:
           EOF
           kubectl apply -f argocd-app.yaml
 
-      # 3. التأكد من حالة الـ App في ArgoCD
-      - name: Verify Deployment Path
-        run: |
-          echo "Deployment successful!"
-          echo "ArgoCD is syncing from path: helm-charts"
-          echo "Application will be available at: /app"
-
-
-      - name: Print Application URL
+      - name: Print Final Links
         run: |
           NLB_DNS=$(kubectl get svc -n prod -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
           echo "=========================================================="
-          echo "🚀 Your Application is being deployed!"
-          echo "🔗 Access it here: http://$NLB_DNS/app"
-          echo "🔧 ArgoCD URL: http://$NLB_DNS/argocd"
-          echo "📊 SonarQube URL: http://$NLB_DNS/sonarqube"
+          echo "🚀 Your Environment is Ready!"
+          echo "🔗 App URL: http://$NLB_DNS/app"
+          echo "🔧 ArgoCD: http://$NLB_DNS/argocd"
+          echo "📊 SonarQube: http://$NLB_DNS/sonarqube"
           echo "=========================================================="
