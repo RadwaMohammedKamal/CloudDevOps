@@ -39,13 +39,14 @@ jobs:
           CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${{ github.event.inputs.env }}-eks")
           aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
 
-      - name: Apply ArgoCD App
+      - name: Apply ArgoCD App (Dynamic Versioning)
         run: |
-          # أولاً: بنجيب لينك الـ ECR من تيرارفورم ونخزنه في متغير
           cd $TF_DIR
           ECR_URL=$(terraform output -raw ecr_repository_url)
           
-          # ثانياً: بنكريت ملف الأبلكيشن وبنبعت الـ ECR URL كـ Parameter لـ Helm
+          # جلب الـ SHA الحالي لاستخدامه كـ Tag
+          CURRENT_TAG=${GITHUB_SHA::7}
+          
           cat <<EOF > argocd-app.yaml
           apiVersion: argoproj.io/v1alpha1
           kind: Application
@@ -63,7 +64,7 @@ jobs:
                   - name: "image.repository"
                     value: "$ECR_URL"
                   - name: "image.tag"
-                    value: "latest"
+                    value: "$CURRENT_TAG" # التغيير هنا: مبقاش latest
             destination:
               server: https://kubernetes.default.svc
               namespace: prod
@@ -78,15 +79,15 @@ jobs:
 
       - name: Print Final Links
         run: |
-          # استراحة لمدة 10 ثواني عشان نضمن إن الـ Ingress بدأ يقرأ
           sleep 10
           NLB_DNS=$(kubectl get svc -n prod -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
           echo "=========================================================="
-          echo "🚀 Your Environment is Ready!"
+          echo "🚀 Your Environment is Ready with Version: ${GITHUB_SHA::7}"
           echo "🔗 App URL: http://$NLB_DNS/app"
           echo "🔧 ArgoCD: http://$NLB_DNS/argocd"
           echo "📊 SonarQube: http://$NLB_DNS/sonarqube"
           echo "=========================================================="
+
 
 # name: CD - Deploy with ArgoCD
 
@@ -129,31 +130,31 @@ jobs:
 #           CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${{ github.event.inputs.env }}-eks")
 #           aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
 
-#       # خطوة ربط الـ ECR بالهيلم شارت عشان ميديناش ImagePullBackOff
-#       - name: Update Helm with ECR URL
-#         run: |
-#           cd $TF_DIR
-#           ECR_URL=$(terraform output -raw ecr_repository_url)
-#           cd ../helm-charts
-#           # تحديث الـ repository في ملف الـ values.yaml
-#           sed -i "s|repository:.*|repository: $ECR_URL|g" values.yaml
-#           # التأكد من أن الـ tag هو latest
-#           sed -i "s|tag:.*|tag: \"latest\"|g" values.yaml
-
 #       - name: Apply ArgoCD App
 #         run: |
+#           # أولاً: بنجيب لينك الـ ECR من تيرارفورم ونخزنه في متغير
+#           cd $TF_DIR
+#           ECR_URL=$(terraform output -raw ecr_repository_url)
+          
+#           # ثانياً: بنكريت ملف الأبلكيشن وبنبعت الـ ECR URL كـ Parameter لـ Helm
 #           cat <<EOF > argocd-app.yaml
 #           apiVersion: argoproj.io/v1alpha1
 #           kind: Application
 #           metadata:
 #             name: cloud-devops-app
-#             namespace: prod  # هنا غيرناها لـ prod بناءً على كلامك
+#             namespace: prod
 #           spec:
 #             project: default
 #             source:
 #               repoURL: https://github.com/RadwaMohammedKamal/CloudDevOps.git
 #               targetRevision: HEAD
 #               path: helm-charts
+#               helm:
+#                 parameters:
+#                   - name: "image.repository"
+#                     value: "$ECR_URL"
+#                   - name: "image.tag"
+#                     value: "latest"
 #             destination:
 #               server: https://kubernetes.default.svc
 #               namespace: prod
@@ -168,6 +169,8 @@ jobs:
 
 #       - name: Print Final Links
 #         run: |
+#           # استراحة لمدة 10 ثواني عشان نضمن إن الـ Ingress بدأ يقرأ
+#           sleep 10
 #           NLB_DNS=$(kubectl get svc -n prod -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
 #           echo "=========================================================="
 #           echo "🚀 Your Environment is Ready!"
@@ -175,3 +178,4 @@ jobs:
 #           echo "🔧 ArgoCD: http://$NLB_DNS/argocd"
 #           echo "📊 SonarQube: http://$NLB_DNS/sonarqube"
 #           echo "=========================================================="
+
