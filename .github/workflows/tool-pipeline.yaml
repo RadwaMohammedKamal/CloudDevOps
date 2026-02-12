@@ -234,27 +234,23 @@ jobs:
     # ----------------------------
     - name: Wait for Argo CD ingress
       run: |
-        for i in {1..20}; do
-          INGRESS=$(kubectl get ingress -n $NAMESPACE -l app.kubernetes.io/name=argocd-server -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-          if [ -n "$INGRESS" ]; then
-            echo "✅ Argo CD Ingress ready: $INGRESS"
-            break
-          fi
-          echo "⏳ Waiting for Argo CD Ingress..."
-          sleep 15
-        done
+          echo "⏳ Checking Argo CD Ingress resource..."
+          for i in {1..10}; do
+            if kubectl get ingress -n $NAMESPACE argocd-server >/dev/null 2>&1; then
+              echo "✅ Argo CD Ingress resource found."
+              break
+            fi
+            sleep 10
+          done
     # ----------------------------
     # Show final URLs
     # ----------------------------
     - name: Show final URLs
       run: |
-        echo "===================================="
-        echo "✅ API Gateway URL:"
-        echo "${{ steps.api.outputs.api_url }}"
-        echo ""
-        echo "➡ Argo CD URL:"
-        echo "http://${{ steps.nlb.outputs.nlb_dns }}/argo"
-        echo "===================================="
+          echo "===================================="
+          echo "✅ API Gateway URL: ${{ steps.api.outputs.api_url }}"
+          echo "➡ Argo CD URL: http://${{ steps.nlb.outputs.nlb_dns }}/argocd"
+          echo "===================================="
     # ----------------------------
     # Health Check (Argo CD /argo)
     # ----------------------------
