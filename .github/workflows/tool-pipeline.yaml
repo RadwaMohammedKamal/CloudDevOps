@@ -204,7 +204,7 @@ jobs:
         
         # 1. جلب اسم الكلاستر من مخرجات تيريفورم
         cd "${TF_DIR}"
-        CLUSTER_NAME=$(terraform output -raw cluster_name || echo "${ENV}-eks")
+        CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
         
         # 2. تحديث Kubeconfig
         echo "Updating Kubeconfig for $CLUSTER_NAME..."
@@ -288,7 +288,7 @@ jobs:
         set -euo pipefail
         
         cd "${TF_DIR}"
-        CLUSTER_NAME=$(terraform output -raw cluster_name || echo "${ENV}-eks")
+        CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
         aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
         
         AWS_BIN=$(which aws)
