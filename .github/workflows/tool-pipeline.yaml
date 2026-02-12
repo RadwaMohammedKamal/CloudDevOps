@@ -229,7 +229,53 @@ jobs:
                       port:
                         number: 80
           INGRESS_EOF
+    # ----------------------------
+    # sonarqube
+    # ----------------------------
+    - name: Install SonarQube
+      run: |
+          set -euo pipefail
+          
+          # 1. الدخول لمجلد التيريفورم وجلب اسم الكلاستر (زي ما زميلك عامل)
+          cd "${TF_DIR}"
+          # استخدمنا الطريقة النضيفة عشان الرموز المخفية متعملش Error
+          RAW_NAME=$(/usr/local/bin/terraform-bin output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
+          CLUSTER_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9_-]//g')
+          
+          # 2. تحديث Kubeconfig
+          echo "Updating Kubeconfig for $CLUSTER_NAME..."
+          aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
+          
+          # 3. Patch Kubeconfig
+          AWS_BIN=$(which aws)
+          sed -i "s|command: aws|command: $AWS_BIN|g" ~/.kube/config || true
+          
+          echo "Installing SonarQube..."
+          
+          # 4. إنشاء ملف الإعدادات (نفس قيم زميلك بالضبط)
+          cat <<EOF > sonarqube-values.yaml
+          monitoringPasscode: changeMe
+          community:
+            enabled: true
+          service:
+            type: ClusterIP
+          ingress:
+            enabled: true
+            ingressClassName: nginx
+            hosts:
+              - name: ""
+                path: /sonarqube
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+          sonarWebContext: /sonarqube
+          EOF
 
+          # 5. التثبيت (نفس طريقة الـ Repo بتاع زميلك)
+          helm upgrade --install sonarqube sonarqube \
+            --repo https://SonarSource.github.io/helm-chart-sonarqube \
+            --namespace $NAMESPACE --create-namespace \
+            --wait --timeout 15m \
+            -f sonarqube-values.yaml
     # ----------------------------
     # Wait for Argo CD ingress resource ready
     # ----------------------------
