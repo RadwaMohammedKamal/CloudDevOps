@@ -6,20 +6,29 @@ server:
     enabled: true
     ingressClassName: nginx
     annotations:
+      # تأكيد البروتوكول وعدم التحويل لـ HTTPS لأن الـ NLB/API Gateway بيتعاملوا مع ده
       nginx.ingress.kubernetes.io/ssl-redirect: "false"
       nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+      # الريجيكس ده بيمسح /argo من المسار قبل ما يبعته لـ ArgoCD Pod
       nginx.ingress.kubernetes.io/rewrite-target: /$2
       nginx.ingress.kubernetes.io/x-forwarded-prefix: "/argo"
       nginx.ingress.kubernetes.io/proxy-body-size: "0"
     hosts:
       - host: "demo.local"
         paths:
-         
+          # المسار اللي الـ API Gateway بيبعت عليه
           - path: /argo(/|$)(.*)
             pathType: ImplementationSpecific
 
 configs:
   params:
+    # إعدادات ArgoCD عشان يعرف إنه شغال ورا Sub-path
     server.basehref: "/argo/"
     server.rootpath: "/argo"
+    # تشغيل الـ HTTP العادي داخلياً (مهم جداً للـ Target Group Health Check)
     server.insecure: true 
+
+# باقي إعدادات الـ Chart (اختياري لو عايزة تضمني إن مفيش حاجة تانية تعطلنا)
+controller:
+  metrics:
+    enabled: false
