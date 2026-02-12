@@ -234,7 +234,7 @@ jobs:
     # Install SonarQube
     # ----------------------------
     - name: Install SonarQube
-      run: |
+        run: |
           set -euo pipefail
           cd "${TF_DIR}"
           RAW_NAME=$(/usr/local/bin/terraform-bin output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
@@ -253,8 +253,12 @@ jobs:
           ingress:
             enabled: false
           EOF
+        
+
+          helm repo add sonarqube-repo https://SonarSource.github.io/helm-chart-sonarqube
+          helm repo update
           
-          helm upgrade --install sonarqube sonarqube/sonarqube \
+          helm upgrade --install sonarqube sonarqube-repo/sonarqube \
             --namespace $NAMESPACE --create-namespace \
             --wait --timeout 15m \
             -f sonarqube-values.yaml
