@@ -63,7 +63,7 @@ def hello():
             <div class="status">Deployed via ArgoCD</div>
             
             <div class="footer">
-                Developed by <span class="name">Radwa Mohamed</span>
+                Developed by <span class="name">Radwa Mohamed Kamal</span>
             </div>
         </div>
     </body>
