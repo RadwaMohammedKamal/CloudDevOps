@@ -51,8 +51,7 @@ jobs:
     # ----------------------------
     - uses: hashicorp/setup-terraform@v2
       with:
-        terraform_wrapper: false 
-
+        terraform_wrapper: false
 
     # ----------------------------
     # Configure AWS credentials
@@ -104,31 +103,40 @@ jobs:
       run: |
         set -euo pipefail
         
-        # Function to run on failure (Debug mode)
         handle_error() {
           echo "::error:: Nginx Ingress deployment failed!"
-          echo "Fetching debug logs..."
           kubectl get all -n $NAMESPACE
           kubectl describe pod -l app.kubernetes.io/name=ingress-nginx -n $NAMESPACE || true
           kubectl logs -l app.kubernetes.io/name=ingress-nginx -n $NAMESPACE --all-containers --tail=100 || true
-          kubectl get events -n $NAMESPACE --sort-by='.lastTimestamp' || true
         }
         
-        # Set up trap to call handle_error on script failure
         trap 'handle_error' ERR
 
         echo "Installing Nginx Ingress Controller..."
-        # استخدمنا الـ Namespace بتاع البايبلاين بتاعتك والـ Logic بتاعه هو في الـ Upgrade
+        
+        # Create values file - HTTP only
+        cat > nginx-values.yaml <<EOF
+        controller:
+          service:
+            type: LoadBalancer
+            annotations:
+              service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+              service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+            ports:
+              http: 80
+            targetPorts:
+              http: http
+            enableHttp: true
+            enableHttps: false
+          admissionWebhooks:
+            enabled: false
+        EOF
+        
         helm upgrade --install ingress-nginx ingress-nginx \
           --repo https://kubernetes.github.io/ingress-nginx \
           --namespace $NAMESPACE --create-namespace \
           --version 4.11.3 \
-          --set controller.service.type=LoadBalancer \
-          --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
-          --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-backend-protocol"="http" \
-          --set controller.admissionWebhooks.enabled=false \
-          --set controller.service.ports.http=80 \
-          --set controller.service.ports.https=null \
+          -f nginx-values.yaml \
           --wait \
           --timeout 15m \
           --debug
@@ -188,7 +196,6 @@ jobs:
         echo "api_url=$API_URL" >> $GITHUB_OUTPUT
         echo "✅ API Gateway URL: $API_URL"
 
-   
     # ----------------------------
     # Delete old Argo CD ingress if exists
     # ----------------------------
@@ -202,7 +209,7 @@ jobs:
         fi
 
     # ----------------------------
-    # Install Argo CD (مطابق تماماً للكود اللي بعتيه)
+    # Install Argo CD
     # ----------------------------
     - name: Install Argo CD
       run: |
@@ -287,7 +294,7 @@ jobs:
         INGRESS_EOF
 
     # ----------------------------
-    # Install SonarQube (مطابق تماماً للكود اللي بعتيه)
+    # Install SonarQube
     # ----------------------------
     - name: Install SonarQube
       run: |
@@ -347,7 +354,7 @@ jobs:
         done
 
     # ----------------------------
-    # Health Check (Argo CD /argo)
+    # Health Check (Argo CD /argocd)
     # ----------------------------
     - name: Final Health Check
       run: |
@@ -366,6 +373,7 @@ jobs:
         done
         echo "❌ ArgoCD is NOT reachable after 5 attempts."
         exit 1
+
     # ----------------------------
     # Show final URLs
     # ----------------------------
