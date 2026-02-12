@@ -233,14 +233,12 @@ jobs:
     # Install SonarQube
     # ----------------------------
     - name: Install SonarQube
-        run: |
+      un: |
           set -euo pipefail
           cd "${TF_DIR}"
           RAW_NAME=$(/usr/local/bin/terraform-bin output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
           CLUSTER_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9_-]//g')
-          
           aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
-          
           AWS_BIN=$(which aws)
           sed -i "s|command: aws|command: $AWS_BIN|g" ~/.kube/config || true
           
@@ -252,10 +250,6 @@ jobs:
           ingress:
             enabled: false
           EOF
-        
-
-          helm repo add sonarqube-repo https://SonarSource.github.io/helm-chart-sonarqube
-          helm repo update
           
           helm upgrade --install sonarqube sonarqube-repo/sonarqube \
             --namespace $NAMESPACE --create-namespace \
