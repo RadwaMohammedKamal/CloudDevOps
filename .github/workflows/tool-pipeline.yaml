@@ -117,6 +117,10 @@ jobs:
         # Create values file - HTTP only
         cat > nginx-values.yaml <<EOF
         controller:
+          config:
+            ssl-redirect: "false"
+            force-ssl-redirect: "false"
+            use-forwarded-headers: "true"
           service:
             type: LoadBalancer
             annotations:
@@ -352,7 +356,16 @@ jobs:
           echo "⏳ Waiting for Argo CD Ingress..."
           sleep 15
         done
-
+    # ----------------------------
+    # Show final URLs
+    # ----------------------------
+    - name: Show final URLs
+      run: |
+        echo "===================================================="
+        echo "🚀 Deployment Complete!"
+        echo "✅ ArgoCD URL: ${{ steps.api.outputs.api_url }}/argocd/"
+        echo "✅ SonarQube URL: ${{ steps.api.outputs.api_url }}/sonarqube/"
+        echo "===================================================="
     # ----------------------------
     # Health Check (Argo CD /argocd)
     # ----------------------------
@@ -373,17 +386,6 @@ jobs:
         done
         echo "❌ ArgoCD is NOT reachable after 5 attempts."
         exit 1
-
-    # ----------------------------
-    # Show final URLs
-    # ----------------------------
-    - name: Show final URLs
-      run: |
-        echo "===================================================="
-        echo "🚀 Deployment Complete!"
-        echo "✅ ArgoCD URL: ${{ steps.api.outputs.api_url }}/argocd/"
-        echo "✅ SonarQube URL: ${{ steps.api.outputs.api_url }}/sonarqube/"
-        echo "===================================================="
 
 
 
