@@ -28,10 +28,9 @@ module "eks" {
 }
 
 module "ecr" {
-  source       = "./modules/ecr"
-  environment  = var.environment
-  repositories = ["vote", "result", "worker"]
-  tags         = var.tags
+  source      = "./modules/ecr"
+  environment = var.environment
+  tags        = var.tags
 }
 
 module "ssm" {

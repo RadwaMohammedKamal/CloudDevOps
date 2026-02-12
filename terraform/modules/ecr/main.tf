@@ -1,7 +1,5 @@
 resource "aws_ecr_repository" "this" {
-  for_each = toset(var.repositories)
-
-  name = "${var.environment}-${each.key}"
+  name = "${var.environment}-app"
 
   image_scanning_configuration {
     scan_on_push = true
