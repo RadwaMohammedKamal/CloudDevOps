@@ -64,8 +64,8 @@ resource "aws_security_group_rule" "allow_vpc_link_to_nodes" {
   from_port                = 0
   to_port                  = 65535
   protocol                 = "tcp"
-  security_group_id        = module.vpc.eks_nodes_sg_id
-  source_security_group_id = module.api.vpc_link_sg_id
+  security_group_id        = module.vpc.eks_nodes_sg_id   # SG nodes
+  source_security_group_id = module.api.vpc_link_sg_id    # SG NLB
 }
 
 

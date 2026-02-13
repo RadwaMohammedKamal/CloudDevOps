@@ -1,23 +1,23 @@
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: cloud-devops-app
-  namespace: prod 
-spec:
-  project: default
+# apiVersion: argoproj.io/v1alpha1
+# kind: Application
+# metadata:
+#   name: cloud-devops-app
+#   namespace: prod 
+# spec:
+#   project: default
 
-  source:
-    repoURL: https://github.com/RadwaMohammedKamal/CloudDevOps.git
-    targetRevision: HEAD
-    path: helm-charts
+#   source:
+#     repoURL: https://github.com/RadwaMohammedKamal/CloudDevOps.git
+#     targetRevision: HEAD
+#     path: helm-charts
 
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: prod
+#   destination:
+#     server: https://kubernetes.default.svc
+#     namespace: prod
 
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
+#   syncPolicy:
+#     automated:
+#       prune: true
+#       selfHeal: true
+#     syncOptions:
+#       - CreateNamespace=true

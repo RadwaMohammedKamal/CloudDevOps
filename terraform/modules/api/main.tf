@@ -44,7 +44,7 @@ resource "aws_apigatewayv2_api" "http_api" {
 }
 
 # ----------------------------
-# NLB Integration (السر هنا في الربط)
+# NLB Integration 
 # ----------------------------
 resource "aws_apigatewayv2_integration" "nlb_integration" {
   count = var.nlb_listener_arn == "" ? 0 : 1

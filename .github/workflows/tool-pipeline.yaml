@@ -174,16 +174,15 @@ jobs:
       run: |
           set -euo pipefail
           
-          # 1. جلب اسم الكلاستر بعيداً عن الـ Wrapper بتاع الـ Action عشان الرموز المخفية
           cd "${TF_DIR}"
-          # هنستخدم terraform-bin مباشرة عشان نهرب من الـ debug info
+          # use terraform-bin ti avoid debug info
           RAW_NAME=$(/usr/local/bin/terraform-bin output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
-          # تنظيف شامل: حذف أي حاجة مش حروف أو أرقام أو شرطة
+          # remove any extar signs
           CLUSTER_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9_-]//g')
           
           echo "✅ Cleaned Cluster Name: $CLUSTER_NAME"
           
-          # 2. تحديث Kubeconfig
+          # 2. update Kubeconfig
           aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
           
           # 3. Patch Kubeconfig
@@ -192,7 +191,7 @@ jobs:
           
           echo "🚀 Installing Argo CD..."
           
-          # 4. إنشاء ملف الإعدادات (لاحظي المسافات في الـ YAML)
+          
           cat <<EOF > argocd-ingress-values.yaml
           server:
             extraArgs:
@@ -200,14 +199,14 @@ jobs:
               - --rootpath=/argocd
           EOF
           
-          # 5. التثبيت
+          # 5. install
           helm upgrade --install argocd argo-cd \
             --repo https://argoproj.github.io/argo-helm \
             --namespace $NAMESPACE --create-namespace \
             --wait --timeout 10m \
             -f argocd-ingress-values.yaml
 
-          # 6. الـ Ingress
+          # 6. Ingress
           kubectl apply -f - <<INGRESS_EOF
           apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -236,13 +235,13 @@ jobs:
       run: |
           set -euo pipefail
           
-          # 1. الدخول لمجلد التيريفورم وجلب اسم الكلاستر (زي ما زميلك عامل)
+          # 1. catch cluster name
           cd "${TF_DIR}"
-          # استخدمنا الطريقة النضيفة عشان الرموز المخفية متعملش Error
+          # avoid any signs
           RAW_NAME=$(/usr/local/bin/terraform-bin output -raw eks_cluster_name 2>/dev/null || echo "${ENV}-eks")
           CLUSTER_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9_-]//g')
           
-          # 2. تحديث Kubeconfig
+          # 2. update Kubeconfig
           echo "Updating Kubeconfig for $CLUSTER_NAME..."
           aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
           
@@ -252,7 +251,7 @@ jobs:
           
           echo "Installing SonarQube..."
           
-          # 4. إنشاء ملف الإعدادات (نفس قيم زميلك بالضبط)
+          # 4. ingress
           cat <<EOF > sonarqube-values.yaml
           monitoringPasscode: changeMe
           community:
@@ -270,7 +269,7 @@ jobs:
           sonarWebContext: /sonarqube
           EOF
 
-          # 5. التثبيت (نفس طريقة الـ Repo بتاع زميلك)
+          # 5. upgrade
           helm upgrade --install sonarqube sonarqube \
             --repo https://SonarSource.github.io/helm-chart-sonarqube \
             --namespace $NAMESPACE --create-namespace \

@@ -28,38 +28,35 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 2. تثبيت تيرارفورم (دي الخطوة اللي كانت ناقصة ومسببة الايرور)
+     
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
 
-      # 3. جلب اسم الكلاستر وتحديث Kubeconfig
+      # 3. Kubeconfig and catch cluster name
       - name: Setup Kubeconfig
         run: |
           cd $TF_DIR
           terraform init -input=false
-          # بنجيب اسم الكلاستر من الـ output بتاع تيرارفورم
+          #     cluster name from output  
           CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${{ github.event.inputs.env }}-eks")
           aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
           echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
 
-      # 4. إضافة وتحديث مستودع Datadog
       - name: Add Datadog Helm Repo
         run: |
           helm repo add datadog https://helm.datadoghq.com
           helm repo update
 
-      # 5. إنشاء Namespace و Secret
       - name: Prepare Datadog Namespace
         run: |
           kubectl create namespace datadog --dry-run=client -o yaml | kubectl apply -f -
-          # تأكدي إن DATADOG_API_KEY موجود في الـ Secrets بتاعة الريبو
+
           kubectl create secret generic datadog-secret \
             --from-literal=api-key=${{ secrets.DATADOG_API_KEY }} \
             -n datadog --dry-run=client -o yaml | kubectl apply -f -
 
-      # 6. تنزيل Datadog Agent
       - name: Deploy Datadog Agent
         run: |
           helm upgrade --install datadog-agent datadog/datadog \
@@ -74,7 +71,6 @@ jobs:
             --set datadog.apm.portEnabled=true \
             --set clusterAgent.enabled=true
 
-      # 7. التأكد من التشغيل
       - name: Verify Datadog Status
         run: |
           echo "Waiting for pods to initialize..."

@@ -44,7 +44,7 @@ jobs:
           cd $TF_DIR
           ECR_URL=$(terraform output -raw ecr_repository_url)
           
-          # جلب الـ SHA الحالي لاستخدامه كـ Tag
+          # catch the current tag to use it
           CURRENT_TAG=${GITHUB_SHA::7}
           
           cat <<EOF > argocd-app.yaml
@@ -64,7 +64,7 @@ jobs:
                   - name: "image.repository"
                     value: "$ECR_URL"
                   - name: "image.tag"
-                    value: "$CURRENT_TAG" # التغيير هنا: مبقاش latest
+                    value: "$CURRENT_TAG" 
             destination:
               server: https://kubernetes.default.svc
               namespace: prod
@@ -88,94 +88,4 @@ jobs:
           echo "📊 SonarQube: http://$NLB_DNS/sonarqube"
           echo "=========================================================="
 
-
-# name: CD - Deploy with ArgoCD
-
-# on:
-#   workflow_dispatch:
-#     inputs:
-#       env:
-#         description: 'Environment'
-#         required: true
-#         default: 'prod'
-#         type: choice
-#         options: [prod, nonprod]
-
-# env:
-#   TF_DIR: terraform
-#   AWS_REGION: eu-north-1
-
-# jobs:
-#   deploy-process:
-#     runs-on: ubuntu-latest
-#     steps:
-#       - uses: actions/checkout@v4
-
-#       - name: Configure AWS Credentials
-#         uses: aws-actions/configure-aws-credentials@v4
-#         with:
-#           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-#           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-#           aws-region: ${{ env.AWS_REGION }}
-
-#       - name: Setup Terraform
-#         uses: hashicorp/setup-terraform@v3
-#         with:
-#           terraform_wrapper: false
-
-#       - name: Update Kubeconfig
-#         run: |
-#           cd $TF_DIR
-#           terraform init -input=false
-#           CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${{ github.event.inputs.env }}-eks")
-#           aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }}
-
-#       - name: Apply ArgoCD App
-#         run: |
-#           # أولاً: بنجيب لينك الـ ECR من تيرارفورم ونخزنه في متغير
-#           cd $TF_DIR
-#           ECR_URL=$(terraform output -raw ecr_repository_url)
-          
-#           # ثانياً: بنكريت ملف الأبلكيشن وبنبعت الـ ECR URL كـ Parameter لـ Helm
-#           cat <<EOF > argocd-app.yaml
-#           apiVersion: argoproj.io/v1alpha1
-#           kind: Application
-#           metadata:
-#             name: cloud-devops-app
-#             namespace: prod
-#           spec:
-#             project: default
-#             source:
-#               repoURL: https://github.com/RadwaMohammedKamal/CloudDevOps.git
-#               targetRevision: HEAD
-#               path: helm-charts
-#               helm:
-#                 parameters:
-#                   - name: "image.repository"
-#                     value: "$ECR_URL"
-#                   - name: "image.tag"
-#                     value: "latest"
-#             destination:
-#               server: https://kubernetes.default.svc
-#               namespace: prod
-#             syncPolicy:
-#               automated:
-#                 prune: true
-#                 selfHeal: true
-#               syncOptions:
-#                 - CreateNamespace=true
-#           EOF
-#           kubectl apply -f argocd-app.yaml
-
-#       - name: Print Final Links
-#         run: |
-#           # استراحة لمدة 10 ثواني عشان نضمن إن الـ Ingress بدأ يقرأ
-#           sleep 10
-#           NLB_DNS=$(kubectl get svc -n prod -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
-#           echo "=========================================================="
-#           echo "🚀 Your Environment is Ready!"
-#           echo "🔗 App URL: http://$NLB_DNS/app"
-#           echo "🔧 ArgoCD: http://$NLB_DNS/argocd"
-#           echo "📊 SonarQube: http://$NLB_DNS/sonarqube"
-#           echo "=========================================================="
 
