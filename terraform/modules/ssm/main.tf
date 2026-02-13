@@ -4,3 +4,4 @@ resource "aws_ssm_parameter" "mongodb_uri" {
   value = var.mongodb_uri
   tags = var.tags
 }
+# store secrets of ssm paramiters

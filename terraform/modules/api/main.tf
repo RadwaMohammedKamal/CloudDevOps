@@ -39,7 +39,7 @@ resource "aws_apigatewayv2_vpc_link" "vpc_link" {
 resource "aws_apigatewayv2_api" "http_api" {
   name          = "${var.environment}-http-api"
   protocol_type = "HTTP"
-  description   = "HTTP API Gateway (No Cognito Auth)" # وصف توضيحي
+  description   = "HTTP API Gateway" 
   tags          = var.tags
 }
 
@@ -61,7 +61,7 @@ resource "aws_apigatewayv2_integration" "nlb_integration" {
 
   lifecycle {
     ignore_changes = [integration_uri]
-  }
+  }# to make the intergration stable even if any change happend  
 }
 
 # ----------------------------

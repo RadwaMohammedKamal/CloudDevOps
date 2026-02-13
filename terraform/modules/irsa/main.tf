@@ -1,3 +1,4 @@
+# allow to take only role not all the server
 data "aws_eks_cluster" "this" {
   name = var.cluster_name
 }
@@ -13,13 +14,13 @@ locals {
     ""
   )
 }
-
+# trust connect between aws and eks
 resource "aws_iam_openid_connect_provider" "this" {
   url = data.aws_eks_cluster.this.identity[0].oidc[0].issuer
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = ["9e99a48a9960b14926bb7f3b02e22da0ecd1d8f0"]
 }
-
+# give access to service account =app and name space =environment=prod
 resource "aws_iam_role" "app_irsa" {
   name = "${var.environment}-app-irsa"
 
@@ -41,7 +42,7 @@ resource "aws_iam_role" "app_irsa" {
     ]
   })
 }
-
+# give access for mongo db so prod can read
 resource "aws_iam_policy" "ssm_read" {
   name = "${var.environment}-ssm-read"
 

@@ -10,13 +10,13 @@ resource "aws_iam_role" "eks_cluster" {
   })
   tags = var.tags
 }
-
+# manage cluster and call other service like nlb
 resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
   for_each = toset(["AmazonEKSClusterPolicy","AmazonEKSServicePolicy"])
   role       = aws_iam_role.eks_cluster.name
   policy_arn = "arn:aws:iam::aws:policy/${each.key}"
 }
-
+# enable node to connect the cluster 
 resource "aws_iam_role" "eks_node_group" {
   name = "${var.environment}-eks-node-group-role"
   assume_role_policy = jsonencode({
@@ -29,7 +29,7 @@ resource "aws_iam_role" "eks_node_group" {
   })
   tags = var.tags
 }
-
+# enable node to connect the cluster and take ip from vpc and pull image
 resource "aws_iam_role_policy_attachment" "eks_node_group_policy" {
   for_each = toset([
     "AmazonEKSWorkerNodePolicy",
@@ -39,7 +39,7 @@ resource "aws_iam_role_policy_attachment" "eks_node_group_policy" {
   role       = aws_iam_role.eks_node_group.name
   policy_arn = "arn:aws:iam::aws:policy/${each.key}"
 }
-
+# pull image to take logs to cloud watch
 resource "aws_iam_role" "eks_fargate_pod" {
   name = "${var.environment}-eks-fargate-pod-role"
   assume_role_policy = jsonencode({

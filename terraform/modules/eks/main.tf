@@ -8,7 +8,7 @@ resource "aws_eks_cluster" "this" {
     # endpoint_private_access = true
     endpoint_public_access  = true
   }
-
+# allow logs to use it in troubleshooting
   enabled_cluster_log_types = [
     "api",
     "audit",
@@ -39,7 +39,7 @@ resource "aws_eks_node_group" "this" {
 
   depends_on = [aws_eks_cluster.this]
 }
-
+# aws manage it (Microservices)
 resource "aws_eks_fargate_profile" "this" {
   cluster_name           = aws_eks_cluster.this.name
   fargate_profile_name   = "${var.environment}-fargate"
@@ -56,7 +56,7 @@ resource "aws_eks_fargate_profile" "this" {
 ##########################
 # EKS ADDONS (FIXED)
 ##########################
-
+# give ip from vpc for all pods
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name = aws_eks_cluster.this.name
   addon_name   = "vpc-cni"
@@ -65,7 +65,7 @@ resource "aws_eks_addon" "vpc_cni" {
   depends_on        = [aws_eks_cluster.this]
   tags              = var.tags
 }
-
+# service descovery  (each pod can call other using name)
 resource "aws_eks_addon" "coredns" {
   cluster_name = aws_eks_cluster.this.name
   addon_name   = "coredns"
@@ -74,7 +74,7 @@ resource "aws_eks_addon" "coredns" {
   depends_on        = [aws_eks_cluster.this]
   tags              = var.tags
 }
-
+# manage networking inside nodes
 resource "aws_eks_addon" "kube_proxy" {
   cluster_name = aws_eks_cluster.this.name
   addon_name   = "kube-proxy"
