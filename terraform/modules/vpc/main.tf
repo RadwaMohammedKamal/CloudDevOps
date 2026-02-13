@@ -111,13 +111,6 @@ resource "aws_security_group" "eks_nodes" {
   description = "Allow traffic from API / VPC Link"
   vpc_id      = aws_vpc.this.id
 
-  ingress {
-    from_port       = 0
-    to_port         = 65535
-    protocol        = "tcp"
-    security_groups = []  
-  }
-
   egress {
     from_port   = 0
     to_port     = 0
@@ -260,3 +253,11 @@ resource "aws_security_group" "eks_nodes" {
 #   tags = var.tags
 # }
 
+
+
+  # ingress {
+  #   from_port       = 0
+  #   to_port         = 65535
+  #   protocol        = "tcp"
+  #   security_groups = []  
+  # }
